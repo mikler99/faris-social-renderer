@@ -10,6 +10,10 @@ app.use(express.json({ limit: "10mb" }));
 const TEMPLATE_PATH = path.join(__dirname, "template.svg");
 const FONTS_DIR = path.join(__dirname, "fonts");
 
+// Default hero image element id in template.svg is "hero_image".
+// Override via env if you rename the element in the SVG.
+const HERO_IMAGE_ID = process.env.HERO_IMAGE_ID || "hero_image";
+
 // Your font files (as you described)
 const FONT_REGULAR = path.join(FONTS_DIR, "HarmoniaSansProCyr-Regular.otf");
 const FONT_SEMIBOLD = path.join(FONTS_DIR, "HarmoniaSansProCyr-SemiBd.otf");
@@ -57,7 +61,7 @@ function replaceTextById(svg, id, newText, opts = {}) {
 
   if (!re.test(svg)) return svg; // id not found, no-op
 
-  return svg.replace(re, (match, tag, attrs) => {
+  return svg.replace(re, (match, tag, attrs, inner) => {
     let updatedAttrs = attrs;
 
     if (fontSizePx) {
@@ -73,6 +77,15 @@ function replaceTextById(svg, id, newText, opts = {}) {
       } else {
         updatedAttrs += ` style="font-size:${fontSizePx}px;"`;
       }
+    }
+
+    // Preserve Inkscape-style <tspan> positioning if present.
+    // If we replace the whole <text> contents, we can lose x/y on the <tspan>
+    // and text may shift or disappear.
+    if (/<tspan\b[^>]*>/m.test(inner)) {
+      const tspanRe = /(<tspan\b[^>]*>)([\s\S]*?)(<\/tspan>)/m;
+      const nextInner = inner.replace(tspanRe, `$1${safeText}$3`);
+      return `<${tag}${updatedAttrs}>${nextInner}</${tag}>`;
     }
 
     return `<${tag}${updatedAttrs}>${safeText}</${tag}>`;
@@ -204,7 +217,7 @@ app.post("/render", async (req, res) => {
 
     // Inline the hero image so it reliably renders
     const heroDataUri = await fetchAsDataUri(hero_image_url);
-    svg = replaceImageHref(svg, "hero_image", heroDataUri);
+    svg = replaceImageHref(svg, HERO_IMAGE_ID, heroDataUri);
 
     // Render with resvg + local fonts
     const resvg = new Resvg(svg, {
