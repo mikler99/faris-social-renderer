@@ -24,13 +24,23 @@ function escapeXml(str = "") {
 function replaceTextById(svg, id, newText) {
   const safe = escapeXml(newText);
 
-  // Targets: <text id="address_line_1">OLD</text> (and similar)
-  // This is a pragmatic regex; works well if your template is consistent.
+  let fontSizeAdjustment = "";
+
+  // Simple overflow protection rules
+  if (id === "address_line_1" && safe.length > 28) {
+    fontSizeAdjustment = ' font-size="36"';
+  }
+
+  if (id === "address_line_2" && safe.length > 20) {
+    fontSizeAdjustment = ' font-size="28"';
+  }
+
   const re = new RegExp(
-    `(<[^>]*\\bid="${id}"[^>]*>)([\\s\\S]*?)(</[^>]+>)`,
+    `(<[^>]*\\bid="${id}"[^>]*)(>)([\\s\\S]*?)(</[^>]+>)`,
     "m"
   );
-  return svg.replace(re, `$1${safe}$3`);
+
+  return svg.replace(re, `$1${fontSizeAdjustment}$2${safe}$4`);
 }
 
 // Replace image href/xlink:href for <image id="hero_image" ...>
@@ -94,4 +104,5 @@ app.post("/render", async (req, res) => {
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => console.log(`Renderer running on :${PORT}`));
