@@ -8,9 +8,6 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.0",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "node-fetch": "^2.6.11",
-    "sharp": "^0.33.5"
+    "express": "^4.19.2"
   }
 }
