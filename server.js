@@ -1,185 +1,255 @@
 const express = require("express");
-const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 const { Resvg } = require("@resvg/resvg-js");
-const sharp = require("sharp");
 
 const app = express();
-app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-/**
- * Fetch a remote image and return a data URI (data:image/...;base64,...)
- * - Validates Content-Type is image/*
- * - Adds a timeout so requests don't hang
- */
-async function fetchAsDataUri(url, { timeoutMs = 8000 } = {}) {
-  if (!url || typeof url !== "string") {
-    throw new Error("background_url is required and must be a string");
-  }
+// ---- Paths ----
+const TEMPLATE_PATH = path.join(__dirname, "template.svg");
+const FONTS_DIR = path.join(__dirname, "fonts");
 
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch (e) {
-    throw new Error(`Invalid background_url: ${String(e.message || e)}`);
-  }
+// Default hero image element id in template.svg is "hero_image".
+// Override via env if you rename the element in the SVG.
+const HERO_IMAGE_ID = process.env.HERO_IMAGE_ID || "hero_image";
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
+// Your font files (as you described)
+const FONT_REGULAR = path.join(FONTS_DIR, "HarmoniaSansProCyr-Regular.otf");
+const FONT_SEMIBOLD = path.join(FONTS_DIR, "HarmoniaSansProCyr-SemiBd.otf");
 
-  let res;
-  try {
-    res = await fetch(parsed.toString(), {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent": "svg-renderer/1.0 (+resvg)",
-        Accept: "image/*,*/*;q=0.8",
-      },
-    });
-  } catch (e) {
-    clearTimeout(t);
-    const msg =
-      e && e.name === "AbortError"
-        ? `Fetch timed out after ${timeoutMs}ms`
-        : String(e.message || e);
-    throw new Error(`Failed to fetch background_url: ${msg}`);
-  } finally {
-    clearTimeout(t);
-  }
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch background_url: HTTP ${res.status}`);
-  }
-
-  const contentType = (res.headers.get("content-type") || "").toLowerCase();
-  if (!contentType.startsWith("image/")) {
-    throw new Error(
-      `background_url did not return an image. content-type="${contentType || "unknown"}". ` +
-        `Use a direct image URL (one that loads the JPG/PNG itself), not a preview/share page.`
-    );
-  }
-
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const base64 = buffer.toString("base64");
-  return `data:${contentType.split(";")[0]};base64,${base64}`;
+// Load template once on boot
+let templateSvg = "";
+try {
+  templateSvg = fs.readFileSync(TEMPLATE_PATH, "utf8");
+} catch (e) {
+  console.error("❌ Could not read template.svg:", e);
+  process.exit(1);
 }
 
-function escapeXml(str) {
+// Validate fonts exist (won’t crash if missing, but you’ll want to know)
+for (const p of [FONT_REGULAR, FONT_SEMIBOLD]) {
+  if (!fs.existsSync(p)) {
+    console.warn(`⚠️ Font file not found: ${p}`);
+  }
+}
+
+// ---- Helpers ----
+function escapeXml(str = "") {
   return String(str)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
+    .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
 }
 
-function replaceImageHref(svgString, elementId, hrefValue) {
-  const safeHref = escapeXml(hrefValue);
+/**
+ * Replaces the inner text of an element with id="...".
+ * Critically: matches the correct closing tag using </\1> so we never create <text>...</tspan> mismatches.
+ * Optionally applies a font-size via inline style.
+ */
+function replaceTextById(svg, id, newText, opts = {}) {
+  const safeText = escapeXml(newText);
+  const { fontSizePx } = opts;
 
-  // xlink:href
-  let out = svgString.replace(
-    new RegExp(
-      `(<image[^>]*\\bid=["']${elementId}["'][^>]*\\bxlink:href=["'])[\\s\\S]*?(["'][^>]*>)`,
-      "i"
-    ),
-    `$1${safeHref}$2`
+  // Capture tag name in group 1, attributes in group 2, inner in group 3
+  const re = new RegExp(
+    `<([\\w:.-]+)([^>]*\\bid="${id}"[^>]*)>([\\s\\S]*?)<\\/\\1>`,
+    "m"
   );
 
-  // href
-  out = out.replace(
-    new RegExp(
-      `(<image[^>]*\\bid=["']${elementId}["'][^>]*\\bhref=["'])[\\s\\S]*?(["'][^>]*>)`,
-      "i"
-    ),
-    `$1${safeHref}$2`
-  );
+  if (!re.test(svg)) return svg; // id not found, no-op
 
-  return out;
+  return svg.replace(re, (match, tag, attrs, inner) => {
+    let updatedAttrs = attrs;
+
+    if (fontSizePx) {
+      // Add/merge style="font-size: XXpx;"
+      const styleRe = /\sstyle="([^"]*)"/m;
+      if (styleRe.test(updatedAttrs)) {
+        updatedAttrs = updatedAttrs.replace(styleRe, (m, styleVal) => {
+          const next = styleVal.trim().endsWith(";")
+            ? `${styleVal} font-size:${fontSizePx}px;`
+            : `${styleVal}; font-size:${fontSizePx}px;`;
+          return ` style="${next}"`;
+        });
+      } else {
+        updatedAttrs += ` style="font-size:${fontSizePx}px;"`;
+      }
+    }
+
+    // Preserve Inkscape-style <tspan> positioning if present.
+    // If we replace the whole <text> contents, we can lose x/y on the <tspan>
+    // and text may shift or disappear.
+    if (/<tspan\b[^>]*>/m.test(inner)) {
+      const tspanRe = /(<tspan\b[^>]*>)([\s\S]*?)(<\/tspan>)/m;
+      const nextInner = inner.replace(tspanRe, `$1${safeText}$3`);
+      return `<${tag}${updatedAttrs}>${nextInner}</${tag}>`;
+    }
+
+    return `<${tag}${updatedAttrs}>${safeText}</${tag}>`;
+  });
 }
 
-function replaceTextContent(svgString, elementId, newText) {
-  const safe = escapeXml(newText);
-  return svgString.replace(
-    new RegExp(
-      `(<text[^>]*\\bid=["']${elementId}["'][^>]*>)([\\s\\S]*?)(</text>)`,
-      "i"
-    ),
-    `$1${safe}$3`
+function replaceImageHref(svg, id, dataUriOrUrl) {
+  const safe = escapeXml(dataUriOrUrl);
+
+  // Replace href="..."
+  svg = svg.replace(
+    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bhref=")[^"]*(")`, "m"),
+    `$1${safe}$2`
   );
+
+  // Replace xlink:href="..."
+  svg = svg.replace(
+    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bxlink:href=")[^"]*(")`, "m"),
+    `$1${safe}$2`
+  );
+
+  return svg;
 }
+
+function guessMimeFromUrl(url) {
+  const u = String(url).toLowerCase();
+  if (u.endsWith(".png")) return "image/png";
+  if (u.endsWith(".jpg") || u.endsWith(".jpeg")) return "image/jpeg";
+  if (u.endsWith(".webp")) return "image/webp";
+  if (u.endsWith(".gif")) return "image/gif";
+  return "application/octet-stream";
+}
+
+async function fetchAsDataUri(url, timeoutMs = 7000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const resp = await fetch(url, {
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        // Some CDNs behave better with a UA
+        "User-Agent": "faris-social-renderer/1.0",
+      },
+    });
+
+    if (!resp.ok) {
+      throw new Error(`Image fetch failed: ${resp.status} ${resp.statusText}`);
+    }
+
+    const contentType =
+      resp.headers.get("content-type")?.split(";")[0]?.trim() ||
+      guessMimeFromUrl(url);
+
+    const arrayBuf = await resp.arrayBuffer();
+    const b64 = Buffer.from(arrayBuf).toString("base64");
+    return `data:${contentType};base64,${b64}`;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
+ * Optional: inject a style block to encourage your SVG to use Harmonia.
+ * IMPORTANT: The font-family name must match what your SVG uses.
+ * If your SVG uses "Harmonia Sans Pro Cyr", keep that; resvg will match via the loaded font files.
+ */
+function injectGlobalFontCss(svg) {
+  // Add a <style> near the top inside <svg ...>
+  // This is safe even if you already set font-family in elements (inline wins).
+  const css = `
+  <style>
+    /* Fallback global font, tweak to match your template naming */
+    svg { font-family: "Harmonia Sans Pro Cyr", "HarmoniaSansProCyr", sans-serif; }
+  </style>
+  `.trim();
+
+  if (/<style[\s>]/m.test(svg)) return svg; // don't double-inject
+  return svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${css}\n`);
+}
+
+// ---- Routes ----
+app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.post("/render", async (req, res) => {
   try {
     const {
-      agent_name = "Agent Name",
-      background_url,
-      width = 1080,
-      height = 1440,
-      format = "png",
-      quality = 90,
+      address_line_1,
+      address_line_2,
+      agent_name,
+      hero_image_url,
     } = req.body || {};
 
-    if (!background_url) {
+    const missing = [];
+    if (!address_line_1) missing.push("address_line_1");
+    if (!address_line_2) missing.push("address_line_2");
+    if (!agent_name) missing.push("agent_name");
+    if (!hero_image_url) missing.push("hero_image_url");
+
+    if (missing.length) {
       return res.status(400).json({
-        error: "Missing required field",
-        details: "background_url is required",
+        error: "Missing required fields",
+        missing,
       });
     }
 
-    const fs = require("fs");
-    let svgString = fs.readFileSync("./template.svg", "utf8");
+    // Start from template
+    let svg = templateSvg;
 
-    // 1) Replace agent name
-    svgString = replaceTextContent(svgString, "agent_name", agent_name);
+    // (Optional) global css fallback to Harmonia
+    svg = injectGlobalFontCss(svg);
 
-    // 2) Fetch & embed the background (resvg will NOT load remote URLs)
-    const bgDataUri = await fetchAsDataUri(background_url);
-    svgString = replaceImageHref(svgString, "hero_image", bgDataUri);
+    // Basic overflow protection: shrink if long
+    const line1 = String(address_line_1);
+    const line2 = String(address_line_2);
 
-    // 3) Render SVG -> PNG
-    const resvg = new Resvg(svgString, {
-      fitTo: { mode: "width", value: Number(width) || 1080 },
-      font: { loadSystemFonts: true },
+    const line1FontSize = line1.length > 28 ? 36 : null;
+    const line2FontSize = line2.length > 20 ? 28 : null;
+
+    // Replace text by element id
+    svg = replaceTextById(svg, "address_line_1", line1, {
+      fontSizePx: line1FontSize,
+    });
+    svg = replaceTextById(svg, "address_line_2", line2, {
+      fontSizePx: line2FontSize,
+    });
+    svg = replaceTextById(svg, "agent_name", agent_name);
+
+    // Inline the hero image so it reliably renders
+    const heroDataUri = await fetchAsDataUri(hero_image_url);
+    svg = replaceImageHref(svg, HERO_IMAGE_ID, heroDataUri);
+
+    // Render with resvg + local fonts
+    const resvg = new Resvg(svg, {
+      fitTo: { mode: "original" },
+      font: {
+        // Load your local brand fonts
+        fontFiles: [FONT_REGULAR, FONT_SEMIBOLD].filter((p) =>
+          fs.existsSync(p)
+        ),
+        // Usually false on Render (keeps it deterministic)
+        loadSystemFonts: false,
+      },
     });
 
-    let output = resvg.render().asPng();
+    const pngData = resvg.render().asPng();
 
-    // 4) Resize / output format
-    const w = Number(width) || 1080;
-    const h = Number(height) || 1440;
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
 
-    let img = sharp(output).resize(w, h, { fit: "cover" });
+    // Optional debugging: return SVG in a header (small) or log it if needed
+    // res.setHeader("X-Debug-SVG-Length", String(svg.length));
 
-    const fmt = String(format || "png").toLowerCase();
-    if (fmt === "jpg" || fmt === "jpeg") {
-      output = await img.jpeg({ quality: Number(quality) || 90 }).toBuffer();
-      res.set("Content-Type", "image/jpeg");
-    } else if (fmt === "webp") {
-      output = await img.webp({ quality: Number(quality) || 90 }).toBuffer();
-      res.set("Content-Type", "image/webp");
-    } else {
-      output = await img.png().toBuffer();
-      res.set("Content-Type", "image/png");
-    }
-
-    res.send(output);
+    return res.status(200).send(Buffer.from(pngData));
   } catch (err) {
-    res.status(500).json({
+    console.error("❌ Render error:", err);
+    return res.status(500).json({
       error: "Render failed",
-      details: String(err && err.message ? err.message : err),
+      details: String(err?.message || err),
     });
   }
 });
 
-app.get("/", (req, res) => {
-  res.json({
-    ok: true,
-    endpoints: {
-      render: "POST /render { agent_name, background_url, width, height, format }",
-    },
-  });
-});
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`SVG renderer running on port ${port}`));
+// ---- Start ----
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Renderer running on :${PORT}`));
