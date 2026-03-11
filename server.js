@@ -96,38 +96,42 @@ function replaceTextById(svg, id, newText, opts = {}) {
   const { autoFit = true } = opts;
 
   const re = new RegExp(
-    `<([\\w:.-]+)([^>]*\\bid="${id}"[^>]*)>([\\s\\S]*?)<\\/\\1>`,
+    `(<([\\w:.-]+)([^>]*\\bid="${id}"[^>]*)>)([\\s\\S]*?)(<\\/\\2>)`,
     "m"
   );
 
   if (!re.test(svg)) return svg;
 
-  return svg.replace(re, (match, tag, attrs) => {
+  return svg.replace(re, (match, openTag, tag, attrs, innerContent, closeTag) => {
     let updatedAttrs = attrs;
 
-    // Auto-fit: shrink font-size for long strings to prevent overflow
+    // Auto-fit: proportionally shrink font-size for long strings.
+    // Uses a scale factor relative to existing size — works regardless of unit scale.
     if (autoFit) {
       const len = String(newText).length;
-      let shrinkPx = null;
-      if (len > 40) shrinkPx = 24;
-      else if (len > 28) shrinkPx = 30;
-      else if (len > 20) shrinkPx = 34;
+      let factor = null;
+      if (len > 40) factor = 0.60;
+      else if (len > 28) factor = 0.75;
+      else if (len > 20) factor = 0.85;
 
-      if (shrinkPx) {
-        const styleRe = /\sstyle="([^"]*)"/m;
-        if (styleRe.test(updatedAttrs)) {
-          updatedAttrs = updatedAttrs.replace(styleRe, (m, styleVal) => {
-            // Only shrink if the existing size is larger
-            const existingMatch = styleVal.match(/font-size:\s*([\d.]+)px/);
-            const existing = existingMatch ? parseFloat(existingMatch[1]) : Infinity;
-            if (shrinkPx < existing) {
-              const next = styleVal.replace(/font-size:\s*[\d.]+px/, `font-size:${shrinkPx}px`);
-              return ` style="${next.includes("font-size") ? next : `${next}; font-size:${shrinkPx}px`}"`;
-            }
-            return m;
-          });
-        }
+      if (factor !== null) {
+        updatedAttrs = updatedAttrs.replace(
+          /(\bstyle\s*=\s*")([^"]*font-size\s*:\s*)([\d.]+)(px|pt|em|rem)([^"]*")/,
+          (m, pre, fsPre, num, unit, post) => {
+            return `${pre}${fsPre}${(parseFloat(num) * factor).toFixed(3)}${unit}${post}`;
+          }
+        );
       }
+    }
+
+    // Preserve tspan structure: if there is a tspan child, only replace its
+    // text content so its x/y positioning attributes are kept intact.
+    if (/<tspan[\s>]/i.test(innerContent)) {
+      const newInner = innerContent.replace(
+        /(<tspan[^>]*>)[^<]*(<\/tspan>)/,
+        `$1${safeText}$2`
+      );
+      return `<${tag}${updatedAttrs}>${newInner}</${tag}>`;
     }
 
     return `<${tag}${updatedAttrs}>${safeText}</${tag}>`;
