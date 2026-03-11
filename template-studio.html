@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Faris Team · Template Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1a1a1f;
+    --surface: #222228;
+    --surface2: #2a2a32;
+    --surface3: #303038;
+    --border: #38383f;
+    --ink: #f0f0f0;
+    --ink2: #8a8a95;
+    --accent: #c8201a;
+    --accent-hover: #a81814;
+    --accent-light: rgba(200,32,26,0.12);
+    --accent-border: rgba(200,32,26,0.3);
+    --green: #2ecc71;
+    --green-light: rgba(46,204,113,0.08);
+    --green-border: rgba(46,204,113,0.25);
+    --yellow: #f0b429;
+    --yellow-light: rgba(240,180,41,0.08);
+    --yellow-border: rgba(240,180,41,0.25);
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Montserrat', sans-serif;
+    --radius: 5px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* HEADER */
+  header {
+    background: #111113;
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .logo-title {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .logo-title-main {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    color: var(--ink);
+    text-transform: uppercase;
+  }
+  .logo-title-sub {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--ink2);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .header-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink2);
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header-meta-dot {
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+
+  /* LAYOUT */
+  .app {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    height: calc(100vh - 56px);
+  }
+
+  /* LEFT PANEL */
+  .panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-section {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 20px;
+  }
+  .panel-section:last-child { border-bottom: none; }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--ink2);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label .step-badge {
+    width: 18px; height: 18px;
+    background: var(--accent);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  /* UPLOAD ZONE */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 24px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    background: var(--surface2);
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .upload-zone input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+  .upload-icon {
+    font-size: 24px;
+    margin-bottom: 8px;
+    display: block;
+    opacity: 0.5;
+  }
+  .upload-zone p {
+    font-weight: 700;
+    font-size: 12px;
+    margin-bottom: 4px;
+    color: var(--ink);
+    letter-spacing: 0.03em;
+  }
+  .upload-zone small {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink2);
+  }
+  .upload-zone.has-file {
+    border-style: solid;
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .upload-zone.has-file .upload-icon { display: none; }
+
+  /* URL COMBOBOX */
+  .url-combobox { position: relative; }
+  .url-input-row { display: flex; }
+  .url-input-row input {
+    flex: 1;
+    border-radius: var(--radius) 0 0 var(--radius);
+    border-right: none;
+  }
+  .url-dropdown-btn {
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-left: none;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    color: var(--ink2);
+    padding: 0 11px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .url-dropdown-btn:hover { background: var(--border); color: var(--ink); }
+  .url-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    z-index: 100;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .url-dropdown-item {
+    display: flex;
+    align-items: center;
+    padding: 9px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink);
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+  }
+  .url-dropdown-item:hover { background: var(--surface3); }
+  .url-dropdown-item span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .url-dropdown-item .del-btn { color: var(--ink2); font-size: 12px; flex-shrink: 0; padding: 2px 4px; border-radius: 3px; }
+  .url-dropdown-item .del-btn:hover { color: var(--accent); }
+  .url-dropdown-save {
+    padding: 8px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--green);
+    cursor: pointer;
+    border-top: 1px solid var(--border);
+  }
+  .url-dropdown-save:hover { background: var(--green-light); }
+
+  /* RENDERER URL */
+  .input-row { display: flex; gap: 8px; align-items: stretch; }
+  input[type="text"], input[type="url"] {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 9px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type="text"]:focus, input[type="url"]:focus {
+    border-color: var(--accent);
+  }
+  input::placeholder { color: var(--ink2); }
+
+  /* FIELDS */
+  .fields-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 20px;
+  }
+  .fields-list::-webkit-scrollbar { width: 3px; }
+  .fields-list::-webkit-scrollbar-track { background: transparent; }
+  .fields-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .field-item {
+    margin-bottom: 12px;
+  }
+  .field-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  .field-id {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .field-type {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+  .type-text {
+    background: var(--surface3);
+    color: var(--ink2);
+    border: 1px solid var(--border);
+  }
+  .type-image {
+    background: var(--accent-light);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+  }
+
+  .field-input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .field-input:focus { border-color: var(--accent); }
+  .field-input.image-field { border-color: var(--accent-border); }
+  .field-input.image-field:focus { border-color: var(--accent); }
+  .field-input.has-value {
+    border-color: rgba(46,204,113,0.35);
+    background: rgba(46,204,113,0.04);
+  }
+
+  /* WARNINGS */
+  .warnings {
+    padding: 12px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .warning-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: var(--mono);
+  }
+  .warning-item.warn {
+    background: var(--yellow-light);
+    border: 1px solid var(--yellow-border);
+    color: var(--yellow);
+  }
+  .warning-item.error {
+    background: var(--accent-light);
+    border: 1px solid var(--accent-border);
+    color: #e85550;
+  }
+  .warning-item.ok {
+    background: var(--green-light);
+    border: 1px solid var(--green-border);
+    color: var(--green);
+  }
+  .warning-icon { font-size: 12px; flex-shrink: 0; margin-top: 1px; }
+
+  /* BUTTONS */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 11px 18px;
+    border-radius: var(--radius);
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    white-space: nowrap;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    width: 100%;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled {
+    background: var(--surface3);
+    color: var(--ink2);
+    cursor: not-allowed;
+  }
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { background: var(--surface3); }
+  .btn-sm { padding: 8px 14px; font-size: 11px; }
+
+  .render-actions {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--surface);
+  }
+
+  /* RIGHT PANEL — PREVIEW */
+  .preview-area {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .preview-toolbar {
+    height: 44px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 12px;
+  }
+  .preview-toolbar-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--ink2);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-right: auto;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .status-pill.idle {
+    background: var(--surface2);
+    color: var(--ink2);
+    border: 1px solid var(--border);
+  }
+  .status-pill.loading {
+    background: var(--yellow-light);
+    color: var(--yellow);
+    border: 1px solid var(--yellow-border);
+  }
+  .status-pill.success {
+    background: var(--green-light);
+    color: var(--green);
+    border: 1px solid var(--green-border);
+  }
+  .status-pill.error {
+    background: var(--accent-light);
+    color: #e85550;
+    border: 1px solid var(--accent-border);
+  }
+  .status-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .status-dot.pulse {
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+
+  .preview-canvas {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 24px;
+    background: #14141a;
+  }
+
+  .preview-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: var(--ink2);
+    text-align: center;
+    margin: auto;
+  }
+  .preview-empty-icon {
+    font-size: 40px;
+    opacity: 0.15;
+    margin-bottom: 4px;
+  }
+  .preview-empty p {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--ink2);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .preview-empty small {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink2);
+    opacity: 0.6;
+  }
+
+  .preview-image-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .preview-image-wrap img {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 200px);
+    width: auto;
+    height: auto;
+    box-shadow: 0 16px 60px rgba(0,0,0,0.5);
+    object-fit: contain;
+  }
+
+  .btn-approve {
+    background: #1a6b3a;
+    color: #fff;
+    border: 1px solid #2ecc71;
+  }
+  .btn-approve:hover {
+    background: #145c30;
+  }
+
+  /* GitHub modal */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px;
+    width: 420px;
+    max-width: 90vw;
+  }
+  .modal h3 {
+    font-size: 14px; font-weight: 700;
+    margin: 0 0 6px 0; color: var(--ink);
+  }
+  .modal p {
+    font-size: 12px; color: var(--ink2);
+    margin: 0 0 20px 0; line-height: 1.5;
+  }
+  .modal .field-group {
+    margin-bottom: 14px;
+  }
+  .modal label {
+    display: block; font-size: 11px;
+    color: var(--ink2); margin-bottom: 4px;
+    font-family: var(--mono);
+  }
+  .modal input {
+    width: 100%; box-sizing: border-box;
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--ink); border-radius: 4px;
+    padding: 8px 10px; font-size: 13px;
+    font-family: var(--mono);
+  }
+  .modal input:focus { outline: none; border-color: var(--accent); }
+  .modal-actions {
+    display: flex; gap: 8px; justify-content: flex-end;
+    margin-top: 20px;
+  }
+  .modal-status {
+    font-size: 12px; font-family: var(--mono);
+    margin-top: 12px; min-height: 18px;
+    color: var(--ink2);
+  }
+  .modal-status.ok { color: var(--green); }
+  .modal-status.err { color: var(--accent); }
+  .svg-preview-wrap {
+    display: inline-block;
+    max-width: calc(100vw - 430px);
+    max-height: calc(100vh - 200px);
+    overflow: hidden;
+    box-shadow: 0 16px 60px rgba(0,0,0,0.5);
+    line-height: 0;
+  }
+  .svg-preview-wrap svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: calc(100vw - 430px);
+    max-height: calc(100vh - 200px);
+  }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .tab {
+    padding: 10px 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+  }
+
+  /* FIELDS EMPTY STATE */
+  .fields-empty {
+    text-align: center;
+    padding: 32px 16px;
+    color: var(--ink2);
+  }
+  .fields-empty p {
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--ink2);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .fields-empty small {
+    font-family: var(--mono);
+    font-size: 10px;
+    opacity: 0.6;
+  }
+
+  /* PAYLOAD PREVIEW */
+  .payload-preview {
+    background: #0d0d10;
+    color: #4ade80;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.7;
+    padding: 16px;
+    border-radius: var(--radius);
+    margin: 0 20px 16px;
+    overflow-x: auto;
+    white-space: pre;
+    border: 1px solid var(--border);
+  }
+
+  /* SCAN RESULT */
+  .scan-result {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--accent-light);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+
+  /* LOADING SHIMMER */
+  .shimmer {
+    background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 50%, var(--surface2) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: var(--radius);
+    height: 500px;
+    width: 340px;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* RENDER TIME */
+  .render-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink2);
+  }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <img src="https://faristeam.ca/_next/static/media/faris-logo.d0bdc10e.svg" alt="Faris Team" style="height:32px; display:block;" />
+    <div style="width:1px; height:28px; background:var(--border); margin: 0 4px;"></div>
+    <div class="logo-title">
+      <span class="logo-title-main">Template Studio</span>
+      <span class="logo-title-sub">SVG Validator & Test Renderer</span>
+    </div>
+  </div>
+  <div class="header-meta">
+    <div class="header-meta-dot"></div>
+    Full Out® Creative Engine
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- LEFT PANEL -->
+  <div class="panel">
+
+    <!-- Step 1: Upload -->
+    <div class="panel-section">
+      <div class="section-label">
+        <span class="step-badge">1</span>
+        Upload SVG Template
+      </div>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="svgFile" accept=".svg" />
+        <span class="upload-icon">⬆</span>
+        <p>Drop SVG here (Illustrator or Inkscape)</p>
+        <small>Auto-fixed for resvg on upload</small>
+      </div>
+      <div id="scanResult" style="margin-top:10px; display:none;"></div>
+    </div>
+
+    <!-- Step 2: Renderer URL -->
+    <div class="panel-section">
+      <div class="section-label">
+        <span class="step-badge">2</span>
+        Renderer Endpoint
+      </div>
+      <div class="url-combobox" id="urlCombobox">
+        <div class="url-input-row">
+          <input type="text" id="rendererUrl" placeholder="https://your-renderer.onrender.com" autocomplete="off" />
+          <button class="url-dropdown-btn" id="urlDropdownBtn" onclick="toggleUrlDropdown()" title="Saved URLs">▾</button>
+        </div>
+        <div class="url-dropdown" id="urlDropdown" style="display:none;">
+          <div id="urlDropdownList"></div>
+          <div class="url-dropdown-save" onclick="saveCurrentUrl()">＋ Save current URL</div>
+        </div>
+      </div>
+      <div style="margin-top:8px; font-family:var(--mono); font-size:10px; color:var(--ink2);">
+        Base URL — /render-inline used for test renders
+      </div>
+    </div>
+
+    <!-- Tabs: Fields / Warnings / Payload -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('fields')">Fields</div>
+      <div class="tab" onclick="switchTab('warnings')">Warnings <span id="warnCount"></span></div>
+      <div class="tab" onclick="switchTab('payload')">Payload</div>
+    </div>
+
+    <!-- Fields Tab -->
+    <div id="tab-fields" class="fields-list">
+      <div class="fields-empty">
+        <p>No template loaded</p>
+        <small>Upload an SVG to detect fields</small>
+      </div>
+    </div>
+
+    <!-- Warnings Tab -->
+    <div id="tab-warnings" class="warnings" style="display:none; overflow-y:auto; flex:1;">
+      <div class="fields-empty">
+        <p>No warnings</p>
+        <small>Upload an SVG to run checks</small>
+      </div>
+    </div>
+
+    <!-- Payload Tab -->
+    <div id="tab-payload" style="display:none; flex:1; overflow-y:auto; padding-top:16px;">
+      <div class="payload-preview" id="payloadPreview">{}</div>
+    </div>
+
+    <!-- Render Button -->
+    <div class="render-actions">
+      <button class="btn btn-primary" id="renderBtn" onclick="triggerRender()" disabled>
+        ▶ Test Render
+      </button>
+      <button class="btn btn-secondary btn-sm" id="downloadBtn" onclick="downloadPng()" style="display:none;">
+        ↓ PNG
+      </button>
+      <button class="btn btn-secondary btn-sm" id="downloadSvgBtn" onclick="downloadFixedSvg()" style="display:none;">
+        ↓ Fixed SVG
+      </button>
+      <button class="btn btn-approve btn-sm" id="approveBtn" onclick="triggerApprove()" style="display:none;">
+        ✓ Approve
+      </button>
+    </div>
+
+  </div>
+
+  <!-- RIGHT PANEL: PREVIEW -->
+  <div class="preview-area">
+    <div class="preview-toolbar">
+      <span class="preview-toolbar-label">Preview</span>
+      <span id="renderMeta" class="render-meta"></span>
+      <span id="statusPill" class="status-pill idle">
+        <span class="status-dot"></span>
+        Ready
+      </span>
+    </div>
+
+    <div class="tabs" style="background:var(--bg); border-bottom:1px solid var(--border);">
+      <div class="tab active" onclick="switchPreviewTab('rendered')">Rendered PNG</div>
+      <div class="tab" onclick="switchPreviewTab('svg')">SVG Preview</div>
+    </div>
+
+    <div class="preview-canvas" id="previewCanvas">
+      <div class="preview-empty">
+        <div class="preview-empty-icon">◻</div>
+        <p>Nothing rendered yet</p>
+        <small>Upload a template, fill fields, hit Test Render</small>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- GitHub Approve Modal -->
+<div class="modal-overlay" id="approveModal" style="display:none;" onclick="if(event.target===this)closeApproveModal()">
+  <div class="modal">
+    <h3>✓ Approve Template</h3>
+    <p>This will commit the SVG to your GitHub repo so the renderer can use it permanently via <code style="font-family:var(--mono);font-size:11px">POST /render/:name</code>.</p>
+    <div class="field-group">
+      <label>Template Name (no spaces, no .svg)</label>
+      <input type="text" id="approveTemplateName" placeholder="market_update" />
+    </div>
+    <div class="field-group">
+      <label>GitHub Repo (owner/repo)</label>
+      <input type="text" id="approveRepo" placeholder="your-org/faris-social-renderer" />
+    </div>
+    <div class="field-group">
+      <label>GitHub Personal Access Token</label>
+      <input type="password" id="approveToken" placeholder="ghp_..." />
+    </div>
+    <div class="field-group">
+      <label>Branch</label>
+      <input type="text" id="approveBranch" value="main" />
+    </div>
+    <div class="modal-status" id="approveStatus"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary btn-sm" onclick="closeApproveModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="approveSubmitBtn" onclick="submitApprove()">Commit to GitHub →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+let svgContent = null;
+let detectedFields = [];
+let lastPngBlob = null;
+let lastPngUrl = null;
+let currentPreviewTab = 'rendered';
+let currentTab = 'fields';
+let currentFileName = '';
+
+// ---- URL COMBOBOX ----
+const DEFAULT_URLS = ['https://faris-social-renderer.onrender.com'];
+const LS_KEY = 'faris_renderer_urls';
+
+function getSavedUrls() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { return []; }
+}
+function setSavedUrls(urls) { localStorage.setItem(LS_KEY, JSON.stringify(urls)); }
+
+function renderUrlDropdown() {
+  const all = [...new Set([...DEFAULT_URLS, ...getSavedUrls()])];
+  document.getElementById('urlDropdownList').innerHTML = all.map(u => `
+    <div class="url-dropdown-item" onclick="selectUrl('${u}')">
+      <span>${u}</span>
+      ${DEFAULT_URLS.includes(u) ? '' : `<span class="del-btn" onclick="event.stopPropagation();removeUrl('${u}')">✕</span>`}
+    </div>`).join('');
+}
+
+function toggleUrlDropdown() {
+  const dd = document.getElementById('urlDropdown');
+  const open = dd.style.display !== 'none';
+  if (!open) renderUrlDropdown();
+  dd.style.display = open ? 'none' : 'block';
+}
+
+function selectUrl(url) {
+  document.getElementById('rendererUrl').value = url;
+  document.getElementById('urlDropdown').style.display = 'none';
+  updateRenderButton();
+}
+
+function saveCurrentUrl() {
+  const url = document.getElementById('rendererUrl').value.trim();
+  if (!url || DEFAULT_URLS.includes(url)) return;
+  const saved = getSavedUrls();
+  if (!saved.includes(url)) setSavedUrls([...saved, url]);
+  renderUrlDropdown();
+}
+
+function removeUrl(url) {
+  setSavedUrls(getSavedUrls().filter(u => u !== url));
+  renderUrlDropdown();
+}
+
+document.addEventListener('click', e => {
+  const box = document.getElementById('urlCombobox');
+  if (box && !box.contains(e.target)) {
+    document.getElementById('urlDropdown').style.display = 'none';
+  }
+});
+
+// Pre-fill renderer URL with default
+document.getElementById('rendererUrl').value = DEFAULT_URLS[0];
+
+// ---- Upload ----
+const uploadZone = document.getElementById('uploadZone');
+const svgFileInput = document.getElementById('svgFile');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.svg')) handleSvgFile(file);
+});
+svgFileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleSvgFile(e.target.files[0]);
+});
+
+function handleSvgFile(file) {
+  currentFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const raw = e.target.result;
+
+    // Sanitize immediately — svgContent is always the clean version
+    const { svg: cleaned, fixes } = sanitizeSvg(raw);
+    svgContent = cleaned;
+
+    // Reset buttons
+    document.getElementById('approveBtn').style.display = 'none';
+    document.getElementById('downloadBtn').style.display = 'none';
+    document.getElementById('downloadSvgBtn').style.display = 'flex';
+
+    // Update upload zone
+    uploadZone.classList.add('has-file');
+    uploadZone.querySelector('p').textContent = file.name;
+    uploadZone.querySelector('small').textContent =
+      `${(file.size/1024).toFixed(1)} KB · ${fixes.length} fix${fixes.length !== 1 ? 'es' : ''} applied`;
+
+    // Detect fields on cleaned SVG
+    const { fields, warnings: detectWarnings } = detectFields(svgContent);
+    detectedFields = fields;
+
+    // Merge fix log into warnings tab
+    const fixWarnings = fixes.map(f => ({ type: 'ok', msg: `✦ ${f}` }));
+    const allWarnings = [...fixWarnings, ...detectWarnings];
+
+    const scanResult = document.getElementById('scanResult');
+    scanResult.style.display = 'block';
+    const errCount  = allWarnings.filter(w => w.type === 'error').length;
+    const warnCount = allWarnings.filter(w => w.type === 'warn').length;
+    const summary = errCount > 0
+      ? `✕ ${errCount} error(s) — check Warnings tab`
+      : warnCount > 0
+        ? `⚠ ${fields.length} fields · ${warnCount} warning(s)`
+        : `✓ ${fields.length} fields · ${fixes.length} fix${fixes.length !== 1 ? 'es' : ''} applied`;
+    scanResult.innerHTML = `<div class="scan-result">${summary}</div>`;
+
+    renderFieldInputs(fields);
+    renderWarnings(allWarnings);
+    updateRenderButton();
+    updatePayloadPreview();
+
+    if (currentPreviewTab === 'svg') showSvgPreview();
+  };
+  reader.readAsText(file);
+}
+
+// ---- SVG SANITIZER ----
+// Fixes raw Illustrator / Inkscape SVGs in-place so they are resvg-compatible.
+// Returns { svg: cleanedString, fixes: string[] }
+function sanitizeSvg(svgString) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgString, 'image/svg+xml');
+  const root = doc.documentElement;
+  const fixes = [];
+
+  // 1. Ensure viewBox
+  if (!root.getAttribute('viewBox')) {
+    const w = parseFloat(root.getAttribute('width')  || '1080');
+    const h = parseFloat(root.getAttribute('height') || '1440');
+    root.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    fixes.push(`Added viewBox (${w}×${h})`);
+  }
+
+  // 2. Remove Inkscape metadata elements
+  const metaEls = [...doc.querySelectorAll('sodipodi\\:namedview, namedview, metadata')];
+  metaEls.forEach(el => el.parentNode && el.parentNode.removeChild(el));
+  if (metaEls.length) fixes.push(`Removed ${metaEls.length} Inkscape metadata element(s)`);
+
+  // 3. Strip inkscape:/sodipodi: attributes from every element
+  let inkAttrCount = 0;
+  doc.querySelectorAll('*').forEach(el => {
+    const bad = [...el.attributes].filter(a =>
+      a.name.startsWith('inkscape:') || a.name.startsWith('sodipodi:')
+    ).map(a => a.name);
+    bad.forEach(a => { el.removeAttribute(a); inkAttrCount++; });
+  });
+  if (inkAttrCount) fixes.push(`Stripped ${inkAttrCount} Inkscape namespace attribute(s)`);
+
+  // 4. Fix shape-inside text positioning
+  // Inkscape writes: style="shape-inside:url(#rectN)" + transform="matrix(…)"
+  // Resvg doesn't support shape-inside → resolve absolute x/y from the rect in defs
+  const defsRects = {};
+  doc.querySelectorAll('defs rect[id], rect[id]').forEach(r => {
+    defsRects[r.getAttribute('id')] = {
+      x: parseFloat(r.getAttribute('x') || 0),
+      y: parseFloat(r.getAttribute('y') || 0),
+      w: parseFloat(r.getAttribute('width')  || 0),
+      h: parseFloat(r.getAttribute('height') || 0),
+    };
+  });
+
+  let shapeFixed = 0;
+  doc.querySelectorAll('text').forEach(textEl => {
+    const style = textEl.getAttribute('style') || '';
+    const siMatch = style.match(/shape-inside\s*:\s*url\(#([^)]+)\)/);
+    if (!siMatch) return;
+
+    const rectId = siMatch[1];
+    const rect   = defsRects[rectId];
+
+    // Parse transform matrix: matrix(a,b,c,d,tx,ty)
+    let tx = 0, ty = 0, sx = 1, sy = 1;
+    const tm = (textEl.getAttribute('transform') || '')
+      .match(/matrix\(\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*\)/);
+    if (tm) { sx = +tm[1]; sy = +tm[4]; tx = +tm[5]; ty = +tm[6]; }
+
+    // Absolute position in SVG coordinate space
+    const absX = rect ? (rect.x * sx + tx) : tx;
+    const absY = rect ? (rect.y * sy + ty) : ty;
+
+    textEl.setAttribute('x', absX.toFixed(2));
+    textEl.setAttribute('y', absY.toFixed(2));
+    textEl.removeAttribute('transform');
+
+    // Clean style — remove shape-inside, display:inline, white-space:pre
+    const cleanStyle = style
+      .replace(/shape-inside\s*:\s*url\([^)]*\)\s*;?\s*/g, '')
+      .replace(/display\s*:\s*inline\s*;?\s*/g, '')
+      .replace(/white-space\s*:\s*pre\s*;?\s*/g, '')
+      .trim().replace(/;+$/, '');
+    cleanStyle ? textEl.setAttribute('style', cleanStyle)
+               : textEl.removeAttribute('style');
+
+    // Fix each tspan — make x absolute, recalculate y
+    textEl.querySelectorAll('tspan').forEach((ts, i) => {
+      ts.setAttribute('x', absX.toFixed(2));
+      const tsY = ts.getAttribute('y');
+      if (tsY !== null) {
+        ts.setAttribute('y', (parseFloat(tsY) * sy + ty).toFixed(2));
+      } else if (i === 0) {
+        ts.setAttribute('y', absY.toFixed(2));
+      }
+    });
+
+    shapeFixed++;
+  });
+  if (shapeFixed) fixes.push(`Fixed ${shapeFixed} shape-inside text element(s) → absolute x/y`);
+
+  // 5. Normalize font-family on text/tspan → Harmonia Sans Pro Cyr
+  const HARMONIA = 'Harmonia Sans Pro Cyr';
+  let fontFixed = 0;
+  doc.querySelectorAll('text, tspan').forEach(el => {
+    const ff = el.getAttribute('font-family') || '';
+    if (ff && !ff.includes('Harmonia') && !ff.toLowerCase().includes('sans-serif')) {
+      el.setAttribute('font-family', HARMONIA);
+      fontFixed++;
+    }
+    const st = el.getAttribute('style') || '';
+    if (st.includes('font-family') && !st.includes('Harmonia')) {
+      el.setAttribute('style', st.replace(/font-family\s*:[^;]+/g, `font-family:'${HARMONIA}'`));
+      fontFixed++;
+    }
+  });
+  if (fontFixed) fixes.push(`Normalized ${fontFixed} font-family declaration(s) → Harmonia Sans Pro Cyr`);
+
+  // 6. Deduplicate elements — remove Inkscape copy-paste artifacts.
+  // Pattern: Inkscape appends -N or -N-M suffixes when duplicating (e.g. address_line_2-1, text2-5-2).
+  // Rule: for each base ID (strip trailing -digits), keep only the FIRST occurrence, remove the rest.
+  const seenBaseIds = new Map(); // baseId → first element seen
+  const toRemove = [];
+
+  doc.querySelectorAll('[id]').forEach(el => {
+    const id = el.getAttribute('id');
+    // Extract base ID: strip trailing -digits patterns (e.g. "foo-1", "foo-1-3", "foo-5-2")
+    const baseId = id.replace(/(-\d+)+$/, '');
+    if (baseId === id) {
+      // No suffix — this IS the canonical element, just register it
+      seenBaseIds.set(baseId, el);
+    } else {
+      // Suffixed duplicate — check if canonical base exists
+      if (seenBaseIds.has(baseId)) {
+        // Remove this duplicate element entirely
+        toRemove.push(el);
+      } else {
+        // Canonical doesn't exist yet — treat this suffixed one as the canonical,
+        // rename it to the clean base ID
+        el.setAttribute('id', baseId);
+        seenBaseIds.set(baseId, el);
+        // Also fix any tspan children that have the same suffix pattern
+        el.querySelectorAll('[id]').forEach(child => {
+          const cid = child.getAttribute('id');
+          const cbase = cid.replace(/(-\d+)+$/, '');
+          if (cbase !== cid) child.setAttribute('id', cbase);
+        });
+      }
+    }
+  });
+
+  // Remove duplicate elements (walk up to remove whole group if parent is also a dup)
+  toRemove.forEach(el => {
+    // Remove the element or its closest non-svg ancestor group that only contains this element
+    let target = el;
+    while (target.parentElement &&
+           target.parentElement.tagName.toLowerCase() !== 'svg' &&
+           target.parentElement.tagName.toLowerCase() !== 'g' ||
+           (target.parentElement && target.parentElement.children.length === 1 &&
+            target.parentElement.tagName.toLowerCase() === 'g')) {
+      target = target.parentElement;
+      if (target.tagName.toLowerCase() === 'svg') { target = el; break; }
+    }
+    if (target.parentNode) target.parentNode.removeChild(target);
+  });
+
+  if (toRemove.length) fixes.push(`Removed ${toRemove.length} duplicate element(s) from copy-paste artifacts`);
+
+  // 7. Serialize, stripping Inkscape xmlns declarations and XML header
+  let out = new XMLSerializer().serializeToString(doc);
+  out = out
+    .replace(/<\?xml[^?]*\?>\s*/g, '')
+    .replace(/\s+xmlns:inkscape="[^"]*"/g, '')
+    .replace(/\s+xmlns:sodipodi="[^"]*"/g, '')
+    .replace(/\s+xmlns:dc="[^"]*"/g, '')
+    .replace(/\s+xmlns:cc="[^"]*"/g, '')
+    .replace(/\s+xmlns:rdf="[^"]*"/g, '')
+    .replace(/\s+xmlns:svg="[^"]*"/g, '');
+
+  return { svg: out, fixes };
+}
+
+// ---- SMART FIELD DETECTION ----
+// Runs on the already-sanitized SVG.
+// Returns only text/image elements that are injectable data fields — not design shapes.
+function detectFields(svgString) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgString, 'image/svg+xml');
+  const fields = [];
+  const warnings = [];
+
+  if (doc.querySelector('parsererror')) {
+    warnings.push({ type: 'error', msg: 'SVG parse error — file may be malformed.' });
+    return { fields, warnings };
+  }
+
+  // Tags that are always structural — never injectable
+  const STRUCT_TAGS = new Set(['svg','defs','style','script','g','clippath',
+    'mask','pattern','lineargradient','radialgradient','filter','marker','symbol']);
+
+  // Shape tags — design elements, not data
+  const SHAPE_TAGS = new Set(['rect','path','circle','ellipse','polygon','polyline','line']);
+
+  // ID patterns that are ALWAYS excluded — auto-generated by Inkscape/Illustrator, not data fields
+  // textN, tspanN, text2-5, path1, rect3, use4, etc.
+  const AUTO_ID = /^(svg|defs|layer|g\d|clip|mask|pattern|gradient|filter|rect\d|path\d|use\d|text\d|tspan\d)/i;
+
+  const imageIds = new Set();
+  doc.querySelectorAll('image[id]').forEach(el => imageIds.add(el.getAttribute('id')));
+
+  doc.querySelectorAll('[id]').forEach(el => {
+    const id  = el.getAttribute('id');
+    const tag = el.tagName.toLowerCase().replace(/.*:/, '');
+
+    if (STRUCT_TAGS.has(tag)) return;
+    if (SHAPE_TAGS.has(tag))  return;
+
+    // Hard exclude auto-generated IDs — they are static design text, not injectable data
+    if (AUTO_ID.test(id)) return;
+
+    if (imageIds.has(id)) {
+      fields.push({ id, type: 'image_url', tag });
+      return;
+    }
+
+    fields.push({ id, type: 'text', tag });
+  });
+
+  // Count how many auto-named elements were silently excluded (for info only)
+  let excludedCount = 0;
+  doc.querySelectorAll('[id]').forEach(el => {
+    const id = el.getAttribute('id');
+    const tag = el.tagName.toLowerCase().replace(/.*:/, '');
+    if (!STRUCT_TAGS.has(tag) && !SHAPE_TAGS.has(tag) && AUTO_ID.test(id)) excludedCount++;
+  });
+  if (excludedCount > 0) {
+    warnings.push({ type: 'ok',
+      msg: `${excludedCount} auto-named element(s) (text2, tspan10, etc.) excluded — static design text, not injectable.` });
+  }
+
+  const untagged = doc.querySelectorAll('text:not([id])').length;
+  if (untagged) {
+    warnings.push({ type: 'ok', msg: `${untagged} untagged <text> element(s) — static design text.` });
+  }
+
+  // Font check (post-sanitize, should mostly be Harmonia by now)
+  const fonts = new Set();
+  doc.querySelectorAll('[font-family]').forEach(el => fonts.add(el.getAttribute('font-family')));
+  doc.querySelectorAll('[style]').forEach(el => {
+    const m = (el.getAttribute('style')||'').match(/font-family\s*:\s*['"]?([^;'"]+)/);
+    if (m) fonts.add(m[1].trim());
+  });
+  fonts.forEach(f => {
+    if (!f) return;
+    if (f.toLowerCase().includes('harmonia')) {
+      warnings.push({ type: 'ok', msg: `Font: "${f}" ✓` });
+    } else if (!['sans-serif','serif','monospace'].includes(f.toLowerCase())) {
+      warnings.push({ type: 'warn', msg: `Font "${f}" not loaded in renderer — may fall back.` });
+    }
+  });
+
+  if (!fields.length) {
+    warnings.push({ type: 'warn',
+      msg: 'No injectable fields found. Add IDs to text/image elements in your design tool.' });
+  } else if (!warnings.filter(w => w.type !== 'ok').length) {
+    warnings.unshift({ type: 'ok', msg: `${fields.length} field(s) ready — no issues detected.` });
+  }
+
+  return { fields, warnings };
+}
+
+// ---- Render Fields UI ----
+function renderFieldInputs(fields) {
+  const container = document.getElementById('tab-fields');
+
+  if (fields.length === 0) {
+    container.innerHTML = `<div class="fields-empty"><p>No fields found</p><small>Check the Warnings tab for details</small></div>`;
+    return;
+  }
+
+  container.innerHTML = fields.map(f => `
+    <div class="field-item">
+      <div class="field-label">
+        <span class="field-id">${f.id}</span>
+        <span class="field-type ${f.type === 'image_url' ? 'type-image' : 'type-text'}">${f.type === 'image_url' ? '⬛ image' : '◻ text'}</span>
+      </div>
+      <input
+        type="text"
+        class="field-input ${f.type === 'image_url' ? 'image-field' : ''}"
+        id="field-${f.id}"
+        placeholder="${f.type === 'image_url' ? 'https://example.com/image.jpg' : `Enter ${f.id}...`}"
+        oninput="onFieldChange()"
+      />
+    </div>
+  `).join('');
+}
+
+function onFieldChange() {
+  // Highlight filled inputs
+  document.querySelectorAll('.field-input').forEach(input => {
+    input.classList.toggle('has-value', input.value.trim().length > 0);
+  });
+  updatePayloadPreview();
+}
+
+function getFieldValues() {
+  const values = {};
+  detectedFields.forEach(f => {
+    const el = document.getElementById(`field-${f.id}`);
+    if (el && el.value.trim()) {
+      values[f.id] = el.value.trim();
+    }
+  });
+  return values;
+}
+
+function updatePayloadPreview() {
+  const values = getFieldValues();
+  document.getElementById('payloadPreview').textContent = JSON.stringify(values, null, 2);
+}
+
+// ---- Warnings UI ----
+function renderWarnings(warnings) {
+  const container = document.getElementById('tab-warnings');
+  const countEl = document.getElementById('warnCount');
+
+  const issues = warnings.filter(w => w.type !== 'ok');
+  countEl.textContent = issues.length > 0 ? `(${issues.length})` : '';
+
+  if (warnings.length === 0) {
+    container.innerHTML = `<div class="fields-empty"><p>No warnings</p><small>Template looks good</small></div>`;
+    return;
+  }
+
+  const icons = { warn: '⚠', error: '✕', ok: '✓' };
+  container.innerHTML = warnings.map(w => `
+    <div class="warning-item ${w.type}">
+      <span class="warning-icon">${icons[w.type]}</span>
+      <span>${w.msg}</span>
+    </div>
+  `).join('');
+}
+
+// ---- Tabs ----
+function switchTab(tab) {
+  currentTab = tab;
+  ['fields', 'warnings', 'payload'].forEach(t => {
+    document.getElementById(`tab-${t}`).style.display = t === tab ? (t === 'fields' ? 'block' : 'flex') : 'none';
+    if (t === 'payload') document.getElementById(`tab-${t}`).style.display = t === tab ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tabs:first-of-type .tab').forEach((el, i) => {
+    el.classList.toggle('active', ['fields','warnings','payload'][i] === tab);
+  });
+  if (tab === 'payload') updatePayloadPreview();
+}
+
+function switchPreviewTab(tab) {
+  currentPreviewTab = tab;
+  document.querySelectorAll('.preview-area .tabs .tab').forEach((el, i) => {
+    el.classList.toggle('active', ['rendered','svg'][i] === tab);
+  });
+  if (tab === 'svg' && svgContent) {
+    showSvgPreview();
+  } else if (tab === 'rendered') {
+    if (lastPngUrl) {
+      showPngPreview(lastPngUrl);
+    } else {
+      showEmpty();
+    }
+  }
+}
+
+// ---- Render Button ----
+function updateRenderButton() {
+  const btn = document.getElementById('renderBtn');
+  const url = document.getElementById('rendererUrl').value.trim();
+  btn.disabled = !svgContent || !url;
+}
+
+document.getElementById('rendererUrl').addEventListener('input', updateRenderButton);
+
+// ---- Trigger Render (uses /render-inline — no git push needed) ----
+async function triggerRender() {
+  const baseUrl = document.getElementById('rendererUrl').value.trim().replace(/\/+$/, '');
+  if (!baseUrl || !svgContent) return;
+
+  const inlineUrl = `${baseUrl}/render-inline`;
+  const fields = getFieldValues();
+  const btn = document.getElementById('renderBtn');
+
+  setStatus('loading', 'Rendering...');
+  btn.disabled = true;
+  btn.textContent = '⏳ Rendering...';
+  showLoading();
+
+  const startTime = Date.now();
+
+  try {
+    const res = await fetch(inlineUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ svg: svgContent, fields }),
+    });
+
+    const elapsed = Date.now() - startTime;
+
+    if (!res.ok) {
+      const errText = await res.text();
+      let errMsg = `HTTP ${res.status}`;
+      try { errMsg = JSON.parse(errText).details || errMsg; } catch {}
+      throw new Error(errMsg);
+    }
+
+    const blob = await res.blob();
+    if (lastPngUrl) URL.revokeObjectURL(lastPngUrl);
+    lastPngBlob = blob;
+    lastPngUrl = URL.createObjectURL(blob);
+
+    setStatus('success', `${(elapsed/1000).toFixed(1)}s`);
+    document.getElementById('renderMeta').textContent = `${(blob.size/1024).toFixed(0)} KB`;
+
+    if (currentPreviewTab === 'rendered') showPngPreview(lastPngUrl);
+
+    document.getElementById('downloadBtn').style.display = 'flex';
+    document.getElementById('approveBtn').style.display = 'flex';
+
+  } catch (err) {
+    setStatus('error', 'Failed');
+    showError(err.message);
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '▶ Test Render';
+    updateRenderButton();
+  }
+}
+
+// ---- Approve Flow (GitHub API) ----
+function triggerApprove() {
+  // Pre-fill template name from uploaded filename if available
+  const nameInput = document.getElementById('approveTemplateName');
+  if (!nameInput.value && currentFileName) {
+    nameInput.value = currentFileName.replace(/\.svg$/i, '').replace(/[^a-z0-9_-]/gi, '_').toLowerCase();
+  }
+  document.getElementById('approveModal').style.display = 'flex';
+  document.getElementById('approveStatus').textContent = '';
+  document.getElementById('approveStatus').className = 'modal-status';
+}
+
+function closeApproveModal() {
+  document.getElementById('approveModal').style.display = 'none';
+}
+
+async function submitApprove() {
+  const name     = document.getElementById('approveTemplateName').value.trim();
+  const repo     = document.getElementById('approveRepo').value.trim();
+  const token    = document.getElementById('approveToken').value.trim();
+  const branch   = document.getElementById('approveBranch').value.trim() || 'main';
+  const statusEl = document.getElementById('approveStatus');
+  const submitBtn = document.getElementById('approveSubmitBtn');
+
+  if (!name || !repo || !token) {
+    statusEl.className = 'modal-status err';
+    statusEl.textContent = '✕ Template name, repo, and token are all required.';
+    return;
+  }
+  if (!/^[a-z0-9_-]+$/i.test(name)) {
+    statusEl.className = 'modal-status err';
+    statusEl.textContent = '✕ Template name: letters, numbers, _ and - only.';
+    return;
+  }
+
+  submitBtn.disabled = true;
+  statusEl.className = 'modal-status';
+  statusEl.textContent = '⏳ Committing to GitHub...';
+
+  const filePath = `templates/${name}.svg`;
+  const apiBase  = `https://api.github.com/repos/${repo}/contents/${filePath}`;
+  const headers  = {
+    'Authorization': `Bearer ${token}`,
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    // Check if file already exists (need its SHA to update)
+    let sha = null;
+    const check = await fetch(`${apiBase}?ref=${branch}`, { headers });
+    if (check.ok) {
+      const existing = await check.json();
+      sha = existing.sha;
+    } else if (check.status !== 404) {
+      throw new Error(`GitHub check failed: ${check.status}`);
+    }
+
+    // Encode SVG as base64
+    const b64 = btoa(unescape(encodeURIComponent(svgContent)));
+
+    const body = {
+      message: sha
+        ? `chore: update template ${name}.svg via Template Studio`
+        : `chore: add template ${name}.svg via Template Studio`,
+      content: b64,
+      branch,
+      ...(sha ? { sha } : {}),
+    };
+
+    const put = await fetch(apiBase, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!put.ok) {
+      const err = await put.json();
+      throw new Error(err.message || `GitHub PUT failed: ${put.status}`);
+    }
+
+    statusEl.className = 'modal-status ok';
+    statusEl.textContent = `✓ Committed! Render will be live at /render/${name} after Render.com deploys (~1–2 min).`;
+    submitBtn.textContent = '✓ Done';
+
+  } catch (err) {
+    statusEl.className = 'modal-status err';
+    statusEl.textContent = `✕ ${err.message}`;
+    submitBtn.disabled = false;
+  }
+}
+
+// ---- Preview States ----
+function showEmpty() {
+  document.getElementById('previewCanvas').innerHTML = `
+    <div class="preview-empty">
+      <div class="preview-empty-icon">◻</div>
+      <p>Nothing rendered yet</p>
+      <small>Fill fields and hit Test Render</small>
+    </div>`;
+}
+
+function showLoading() {
+  document.getElementById('previewCanvas').innerHTML = `<div class="shimmer"></div>`;
+}
+
+function showPngPreview(url) {
+  document.getElementById('previewCanvas').innerHTML = `
+    <div class="preview-image-wrap">
+      <img src="${url}" alt="Rendered output" />
+    </div>`;
+}
+
+function showSvgPreview() {
+  if (!svgContent) return;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgContent, 'image/svg+xml');
+  const svgEl = doc.documentElement;
+
+  // Ensure viewBox is set so the SVG scales proportionally
+  if (!svgEl.getAttribute('viewBox')) {
+    const w = svgEl.getAttribute('width') || '1080';
+    const h = svgEl.getAttribute('height') || '1440';
+    svgEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  }
+
+  // Remove fixed width/height so CSS controls sizing
+  svgEl.removeAttribute('width');
+  svgEl.removeAttribute('height');
+  svgEl.style.cssText = '';
+
+  document.getElementById('previewCanvas').innerHTML = `
+    <div class="svg-preview-wrap">
+      ${new XMLSerializer().serializeToString(svgEl)}
+    </div>`;
+}
+
+function showError(msg) {
+  document.getElementById('previewCanvas').innerHTML = `
+    <div class="preview-empty">
+      <div class="preview-empty-icon" style="color:var(--accent)">✕</div>
+      <p style="color:var(--accent)">Render failed</p>
+      <small style="color:var(--accent); max-width:300px; word-break:break-word;">${msg}</small>
+      <br>
+      <small>Check renderer URL, CORS settings, and field values</small>
+    </div>`;
+}
+
+// ---- Status ----
+function setStatus(state, label) {
+  const pill = document.getElementById('statusPill');
+  pill.className = `status-pill ${state}`;
+  const dot = state === 'loading'
+    ? `<span class="status-dot pulse"></span>`
+    : `<span class="status-dot"></span>`;
+  pill.innerHTML = `${dot} ${label}`;
+}
+
+// ---- Download ----
+function downloadPng() {
+  if (!lastPngBlob) return;
+  const a = document.createElement('a');
+  a.href = lastPngUrl;
+  a.download = (currentFileName || 'render').replace(/\.svg$/i, '') + '.png';
+  a.click();
+}
+
+function downloadFixedSvg() {
+  if (!svgContent) return;
+  const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = (currentFileName || 'template').replace(/\.svg$/i, '') + '-fixed.svg';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---- CORS note ----
+// If the renderer is on a different origin, it needs CORS headers.
+// Add this to server.js: app.use(require('cors')())
+// or: res.setHeader('Access-Control-Allow-Origin', '*')
+</script>
+</body>
+</html>
