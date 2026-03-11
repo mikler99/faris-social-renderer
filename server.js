@@ -7,27 +7,37 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 // ---- Paths ----
-const TEMPLATE_PATH = path.join(__dirname, "template.svg");
+const TEMPLATES_DIR = path.join(__dirname, "templates");
 const FONTS_DIR = path.join(__dirname, "fonts");
 
-// Your font files (as you described)
+// Font files
 const FONT_REGULAR = path.join(FONTS_DIR, "HarmoniaSansProCyr-Regular.otf");
 const FONT_SEMIBOLD = path.join(FONTS_DIR, "HarmoniaSansProCyr-SemiBd.otf");
 
-// Load template once on boot
-let templateSvg = "";
-try {
-  templateSvg = fs.readFileSync(TEMPLATE_PATH, "utf8");
-} catch (e) {
-  console.error("❌ Could not read template.svg:", e);
-  process.exit(1);
-}
-
-// Validate fonts exist (won’t crash if missing, but you’ll want to know)
+// Validate fonts exist on boot
 for (const p of [FONT_REGULAR, FONT_SEMIBOLD]) {
   if (!fs.existsSync(p)) {
-    console.warn(`⚠️ Font file not found: ${p}`);
+    console.warn(`⚠️  Font file not found: ${p}`);
   }
+}
+
+// ---- Template loading ----
+// Supports /render (default template.svg) and /render/:template (templates/<name>.svg)
+// Templates are loaded fresh per request so updates don't need a redeploy.
+function loadTemplate(name = "template") {
+  // Try templates/<name>.svg first, then fall back to <name>.svg in root
+  const candidates = [
+    path.join(TEMPLATES_DIR, `${name}.svg`),
+    path.join(__dirname, `${name}.svg`),
+  ];
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      return { svg: fs.readFileSync(p, "utf8"), resolvedPath: p };
+    }
+  }
+
+  throw new Error(`Template not found: "${name}". Looked in: ${candidates.join(", ")}`);
 }
 
 // ---- Helpers ----
@@ -41,37 +51,73 @@ function escapeXml(str = "") {
 }
 
 /**
- * Replaces the inner text of an element with id="...".
- * Critically: matches the correct closing tag using </\1> so we never create <text>...</tspan> mismatches.
- * Optionally applies a font-size via inline style.
+ * Detect all element IDs present in the SVG.
+ * Returns a Set of id strings.
+ */
+function detectIds(svg) {
+  const ids = new Set();
+  const re = /\bid="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(svg)) !== null) {
+    ids.add(m[1]);
+  }
+  return ids;
+}
+
+/**
+ * Detect all <image> element IDs in the SVG.
+ */
+function detectImageIds(svg) {
+  const ids = new Set();
+  const re = /<image[^>]*\bid="([^"]+)"[^>]*>/g;
+  let m;
+  while ((m = re.exec(svg)) !== null) {
+    ids.add(m[1]);
+  }
+  return ids;
+}
+
+/**
+ * Replace inner content of any element matching id="<id>".
+ * Handles nested tspan (Illustrator) by replacing the full inner content.
+ * Optionally shrinks font-size if text is long (auto-fit).
  */
 function replaceTextById(svg, id, newText, opts = {}) {
   const safeText = escapeXml(newText);
-  const { fontSizePx } = opts;
+  const { autoFit = true } = opts;
 
-  // Capture tag name in group 1, attributes in group 2, inner in group 3
   const re = new RegExp(
     `<([\\w:.-]+)([^>]*\\bid="${id}"[^>]*)>([\\s\\S]*?)<\\/\\1>`,
     "m"
   );
 
-  if (!re.test(svg)) return svg; // id not found, no-op
+  if (!re.test(svg)) return svg;
 
   return svg.replace(re, (match, tag, attrs) => {
     let updatedAttrs = attrs;
 
-    if (fontSizePx) {
-      // Add/merge style="font-size: XXpx;"
-      const styleRe = /\sstyle="([^"]*)"/m;
-      if (styleRe.test(updatedAttrs)) {
-        updatedAttrs = updatedAttrs.replace(styleRe, (m, styleVal) => {
-          const next = styleVal.trim().endsWith(";")
-            ? `${styleVal} font-size:${fontSizePx}px;`
-            : `${styleVal}; font-size:${fontSizePx}px;`;
-          return ` style="${next}"`;
-        });
-      } else {
-        updatedAttrs += ` style="font-size:${fontSizePx}px;"`;
+    // Auto-fit: shrink font-size for long strings to prevent overflow
+    if (autoFit) {
+      const len = String(newText).length;
+      let shrinkPx = null;
+      if (len > 40) shrinkPx = 24;
+      else if (len > 28) shrinkPx = 30;
+      else if (len > 20) shrinkPx = 34;
+
+      if (shrinkPx) {
+        const styleRe = /\sstyle="([^"]*)"/m;
+        if (styleRe.test(updatedAttrs)) {
+          updatedAttrs = updatedAttrs.replace(styleRe, (m, styleVal) => {
+            // Only shrink if the existing size is larger
+            const existingMatch = styleVal.match(/font-size:\s*([\d.]+)px/);
+            const existing = existingMatch ? parseFloat(existingMatch[1]) : Infinity;
+            if (shrinkPx < existing) {
+              const next = styleVal.replace(/font-size:\s*[\d.]+px/, `font-size:${shrinkPx}px`);
+              return ` style="${next.includes("font-size") ? next : `${next}; font-size:${shrinkPx}px`}"`;
+            }
+            return m;
+          });
+        }
       }
     }
 
@@ -79,16 +125,16 @@ function replaceTextById(svg, id, newText, opts = {}) {
   });
 }
 
+/**
+ * Replace href / xlink:href on an <image> element matching id="<id>".
+ */
 function replaceImageHref(svg, id, dataUriOrUrl) {
   const safe = escapeXml(dataUriOrUrl);
 
-  // Replace href="..."
   svg = svg.replace(
     new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bhref=")[^"]*(")`, "m"),
     `$1${safe}$2`
   );
-
-  // Replace xlink:href="..."
   svg = svg.replace(
     new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bxlink:href=")[^"]*(")`, "m"),
     `$1${safe}$2`
@@ -114,10 +160,7 @@ async function fetchAsDataUri(url, timeoutMs = 7000) {
     const resp = await fetch(url, {
       signal: controller.signal,
       redirect: "follow",
-      headers: {
-        // Some CDNs behave better with a UA
-        "User-Agent": "faris-social-renderer/1.0",
-      },
+      headers: { "User-Agent": "faris-social-renderer/1.0" },
     });
 
     if (!resp.ok) {
@@ -136,112 +179,139 @@ async function fetchAsDataUri(url, timeoutMs = 7000) {
   }
 }
 
-/**
- * Optional: inject a style block to encourage your SVG to use Harmonia.
- * IMPORTANT: The font-family name must match what your SVG uses.
- * If your SVG uses "Harmonia Sans Pro Cyr", keep that; resvg will match via the loaded font files.
- */
 function injectGlobalFontCss(svg) {
-  // Add a <style> near the top inside <svg ...>
-  // This is safe even if you already set font-family in elements (inline wins).
-  const css = `
-  <style>
-    /* Fallback global font, tweak to match your template naming */
-    svg { font-family: "Harmonia Sans Pro Cyr", "HarmoniaSansProCyr", sans-serif; }
-  </style>
-  `.trim();
-
-  if (/<style[\s>]/m.test(svg)) return svg; // don't double-inject
+  const css = `<style>svg { font-family: "Harmonia Sans Pro Cyr", "HarmoniaSansProCyr", sans-serif; }</style>`;
+  if (/<style[\s>]/m.test(svg)) return svg;
   return svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${css}\n`);
+}
+
+// ---- Core render logic ----
+// Shared by both POST /render and POST /render/:template
+async function renderSvgToPng(svg, fields) {
+  svg = injectGlobalFontCss(svg);
+
+  const svgImageIds = detectImageIds(svg);
+  const svgAllIds = detectIds(svg);
+
+  // Process all fields from the request body dynamically
+  for (const [key, value] of Object.entries(fields)) {
+    if (!value) continue;
+
+    if (svgImageIds.has(key)) {
+      // This field maps to an <image> element — fetch and embed as base64
+      const dataUri = await fetchAsDataUri(String(value));
+      svg = replaceImageHref(svg, key, dataUri);
+    } else if (svgAllIds.has(key)) {
+      // Text or other element — replace inner content
+      svg = replaceTextById(svg, key, String(value));
+    }
+    // If the key doesn't match any ID in the SVG, silently ignore it
+  }
+
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: "original" },
+    font: {
+      fontFiles: [FONT_REGULAR, FONT_SEMIBOLD].filter((p) => fs.existsSync(p)),
+      loadSystemFonts: false,
+    },
+  });
+
+  return resvg.render().asPng();
 }
 
 // ---- Routes ----
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+/**
+ * GET /templates
+ * Lists all available .svg files across root and templates/ directory.
+ * Useful for the visual studio and debugging.
+ */
+app.get("/templates", (req, res) => {
+  const found = [];
+
+  // Root-level template.svg (legacy)
+  const rootTemplate = path.join(__dirname, "template.svg");
+  if (fs.existsSync(rootTemplate)) {
+    found.push({ name: "template", path: "template.svg" });
+  }
+
+  // templates/ directory
+  if (fs.existsSync(TEMPLATES_DIR)) {
+    const files = fs.readdirSync(TEMPLATES_DIR).filter((f) => f.endsWith(".svg"));
+    for (const f of files) {
+      found.push({ name: path.basename(f, ".svg"), path: `templates/${f}` });
+    }
+  }
+
+  res.json({ templates: found });
+});
+
+/**
+ * GET /templates/:name/fields
+ * Returns all IDs detected in a template SVG.
+ * Powers the visual studio field detection.
+ */
+app.get("/templates/:name/fields", (req, res) => {
+  try {
+    const { svg } = loadTemplate(req.params.name);
+    const imageIds = detectImageIds(svg);
+    const allIds = detectIds(svg);
+
+    const fields = [...allIds]
+      .filter((id) => id !== "svg1" && !id.startsWith("defs") && !id.startsWith("g"))
+      .map((id) => ({
+        id,
+        type: imageIds.has(id) ? "image_url" : "text",
+      }));
+
+    res.json({ template: req.params.name, fields });
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /render
+ * Legacy route — uses template.svg in root. Fully backwards compatible.
+ * Body: any key/value pairs where keys match element IDs in the SVG.
+ */
 app.post("/render", async (req, res) => {
   try {
-    const {
-      address_line_1,
-      address_line_2,
-      agent_name,
-      hero_image_url,
-      status_text,
-    } = req.body || {};
-
-    const missing = [];
-    if (!address_line_1) missing.push("address_line_1");
-    if (!address_line_2) missing.push("address_line_2");
-    if (!agent_name) missing.push("agent_name");
-    if (!hero_image_url) missing.push("hero_image_url");
-
-    if (missing.length) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        missing,
-      });
-    }
-
-    // Start from template
-    let svg = templateSvg;
-
-    // (Optional) global css fallback to Harmonia
-    svg = injectGlobalFontCss(svg);
-
-    // Basic overflow protection: shrink if long
-    const line1 = String(address_line_1);
-    const line2 = String(address_line_2);
-
-    const line1FontSize = line1.length > 28 ? 36 : null;
-    const line2FontSize = line2.length > 20 ? 28 : null;
-
-    const status = status_text ? String(status_text) : "JUST SOLD";
-    const statusFontSize = status.length > 10 ? 18 : null;
-
-    // Replace text by element id
-    svg = replaceTextById(svg, "address_line_1", line1, {
-      fontSizePx: line1FontSize,
-    });
-    svg = replaceTextById(svg, "address_line_2", line2, {
-      fontSizePx: line2FontSize,
-    });
-    svg = replaceTextById(svg, "status", status, { fontSizePx: statusFontSize });
-    svg = replaceTextById(svg, "agent_name", agent_name);
-
-    // Inline the hero image so it reliably renders
-    const heroDataUri = await fetchAsDataUri(hero_image_url);
-    svg = replaceImageHref(svg, "hero_image", heroDataUri);
-
-    // Render with resvg + local fonts
-    const resvg = new Resvg(svg, {
-      fitTo: { mode: "original" },
-      font: {
-        // Load your local brand fonts
-        fontFiles: [FONT_REGULAR, FONT_SEMIBOLD].filter((p) =>
-          fs.existsSync(p)
-        ),
-        // Usually false on Render (keeps it deterministic)
-        loadSystemFonts: false,
-      },
-    });
-
-    const pngData = resvg.render().asPng();
+    const { svg } = loadTemplate("template");
+    const pngData = await renderSvgToPng(svg, req.body || {});
 
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "no-store");
-
-    // Optional debugging: return SVG in a header (small) or log it if needed
-    // res.setHeader("X-Debug-SVG-Length", String(svg.length));
-
     return res.status(200).send(Buffer.from(pngData));
   } catch (err) {
     console.error("❌ Render error:", err);
-    return res.status(500).json({
-      error: "Render failed",
-      details: String(err?.message || err),
-    });
+    return res.status(500).json({ error: "Render failed", details: String(err?.message || err) });
+  }
+});
+
+/**
+ * POST /render/:template
+ * Dynamic route — renders any named template from the templates/ directory.
+ * Body: any key/value pairs where keys match element IDs in the SVG.
+ *
+ * Example: POST /render/just_sold  { "address_line_1": "...", "hero_image": "..." }
+ * Example: POST /render/open_house { "date": "...", "address_line_1": "..." }
+ */
+app.post("/render/:template", async (req, res) => {
+  try {
+    const { svg } = loadTemplate(req.params.template);
+    const pngData = await renderSvgToPng(svg, req.body || {});
+
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(Buffer.from(pngData));
+  } catch (err) {
+    console.error("❌ Render error:", err);
+    return res.status(500).json({ error: "Render failed", details: String(err?.message || err) });
   }
 });
 
 // ---- Start ----
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Renderer running on :${PORT}`));
+app.listen(PORT, () => console.log(`✅ Renderer running on :${PORT}`));
