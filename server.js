@@ -281,6 +281,29 @@ app.get("/templates/:name/fields", (req, res) => {
 });
 
 /**
+ * POST /render-inline
+ * Accepts raw SVG + fields in the request body. No file lookup needed.
+ * Powers the Template Studio test-render flow — no git push required.
+ *
+ * Body: { svg: "<svg>...</svg>", fields: { id: value, ... } }
+ */
+app.post("/render-inline", async (req, res) => {
+  try {
+    const { svg, fields = {} } = req.body || {};
+    if (!svg || typeof svg !== "string") {
+      return res.status(400).json({ error: "Missing or invalid `svg` field in request body." });
+    }
+    const pngData = await renderSvgToPng(svg, fields);
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(Buffer.from(pngData));
+  } catch (err) {
+    console.error("❌ Inline render error:", err);
+    return res.status(500).json({ error: "Render failed", details: String(err?.message || err) });
+  }
+});
+
+/**
  * POST /render
  * Legacy route — uses template.svg in root. Fully backwards compatible.
  * Body: any key/value pairs where keys match element IDs in the SVG.
