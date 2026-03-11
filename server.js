@@ -6,6 +6,15 @@ const { Resvg } = require("@resvg/resvg-js");
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+// ---- CORS — allow browser requests from any origin ----
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
 // ---- Paths ----
 const TEMPLATES_DIR = path.join(__dirname, "templates");
 const FONTS_DIR = path.join(__dirname, "fonts");
