@@ -1047,21 +1047,33 @@ function sanitizeSvg(svgString) {
     const rect   = defsRects[rectId];
 
     // Parse transform matrix: matrix(a,b,c,d,tx,ty)
-    let tx = 0, ty = 0, sx = 1, sy = 1;
+    let txM = 0, tyM = 0, sx = 1, sy = 1;
     const tm = (textEl.getAttribute('transform') || '')
       .match(/matrix\(\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*\)/);
-    if (tm) { sx = +tm[1]; sy = +tm[4]; tx = +tm[5]; ty = +tm[6]; }
+    if (tm) { sx = +tm[1]; sy = +tm[4]; txM = +tm[5]; tyM = +tm[6]; }
 
-    // Absolute position in SVG coordinate space
-    const absX = rect ? (rect.x * sx + tx) : tx;
-    const absY = rect ? (rect.y * sy + ty) : ty;
+    // ── Scale font-size by the matrix scale factor ────────────────────────
+    // Inkscape stores font-size in the element's pre-transform coordinate space.
+    // After removing the transform we must multiply font-size by sx.
+    const scaledStyle = style.replace(
+      /font-size\s*:\s*([\d.]+)\s*(px|pt|em|rem)?/i,
+      (_, num, unit) => `font-size:${(parseFloat(num) * sx).toFixed(3)}${unit || 'px'}`
+    );
 
-    textEl.setAttribute('x', absX.toFixed(2));
-    textEl.setAttribute('y', absY.toFixed(2));
+    // Absolute position: transform the text element's own x/y through the matrix
+    const textOwnX = textEl.getAttribute('x');
+    const textOwnY = textEl.getAttribute('y');
+    const absX = textOwnX !== null ? (parseFloat(textOwnX) * sx + txM)
+                                   : rect ? (rect.x * sx + txM) : txM;
+    const absY = textOwnY !== null ? (parseFloat(textOwnY) * sy + tyM)
+                                   : rect ? (rect.y * sy + tyM) : tyM;
+
+    textEl.setAttribute('x', absX.toFixed(3));
+    textEl.setAttribute('y', absY.toFixed(3));
     textEl.removeAttribute('transform');
 
-    // Clean style — remove shape-inside, display:inline, white-space:pre
-    const cleanStyle = style
+    // Clean style — remove shape-inside, display:inline, white-space:pre; apply scaled font-size
+    const cleanStyle = scaledStyle
       .replace(/shape-inside\s*:\s*url\([^)]*\)\s*;?\s*/g, '')
       .replace(/display\s*:\s*inline\s*;?\s*/g, '')
       .replace(/white-space\s*:\s*pre\s*;?\s*/g, '')
@@ -1069,20 +1081,131 @@ function sanitizeSvg(svgString) {
     cleanStyle ? textEl.setAttribute('style', cleanStyle)
                : textEl.removeAttribute('style');
 
-    // Fix each tspan — make x absolute, recalculate y
+    // Fix each tspan — transform its own x/y through the matrix
     textEl.querySelectorAll('tspan').forEach((ts, i) => {
-      ts.setAttribute('x', absX.toFixed(2));
+      const tsX = ts.getAttribute('x');
       const tsY = ts.getAttribute('y');
+      if (tsX !== null) {
+        ts.setAttribute('x', (parseFloat(tsX) * sx + txM).toFixed(3));
+      } else {
+        ts.setAttribute('x', absX.toFixed(3));
+      }
       if (tsY !== null) {
-        ts.setAttribute('y', (parseFloat(tsY) * sy + ty).toFixed(2));
+        ts.setAttribute('y', (parseFloat(tsY) * sy + tyM).toFixed(3));
       } else if (i === 0) {
-        ts.setAttribute('y', absY.toFixed(2));
+        ts.setAttribute('y', absY.toFixed(3));
       }
     });
 
     shapeFixed++;
   });
-  if (shapeFixed) fixes.push(`Fixed ${shapeFixed} shape-inside text element(s) → absolute x/y`);
+  if (shapeFixed) fixes.push(`Fixed ${shapeFixed} shape-inside text element(s) → scaled font-size + absolute x/y`);
+
+  // 4b. Fix text elements with matrix transform but NO shape-inside.
+  //
+  // Inkscape writes transform="matrix(sx,0,0,sy,tx,ty)" on <text> to scale+position it.
+  // Resvg does NOT apply transforms to text elements, so we must bake in the matrix:
+  //   • new font-size  = old font-size × sx
+  //   • new x/y coords = scale × local_coord + translate
+  //
+  // Font-size conversion: Inkscape stores font sizes in pt internally.
+  // The SVG viewBox may be in px (at 96 dpi). Conversion chain:
+  //   pt → px(96dpi) = pt × (96/72)
+  //   px(96dpi) → viewBox units = ÷ (svgWidth / viewBoxWidth)
+  //
+  // Rather than trusting the stored px value (which may already be pre-scaled by
+  // a different factor), we derive the correct viewBox font size directly from
+  // the matrix scale:   finalFontSize = storedFontSize × matrixScale
+
+  // Get the SVG's viewBox ↔ pixel ratio for reference (used to validate, not compute)
+  const svgEl2 = doc.documentElement;
+  const vb = (svgEl2.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  const svgW = parseFloat(svgEl2.getAttribute('width')) || vb[2] || 1080;
+  const vbW  = vb[2] || svgW;
+  // px-per-viewBox-unit  (e.g. 1080/285.75 ≈ 3.78)
+  const pxPerVBU = svgW / vbW;
+
+  let matrixFixed = 0;
+  doc.querySelectorAll('text').forEach(textEl => {
+    const style = textEl.getAttribute('style') || '';
+    if (style.includes('shape-inside')) return; // already handled above
+
+    const transformAttr = textEl.getAttribute('transform') || '';
+    if (!transformAttr) return;
+
+    const tm = transformAttr.match(
+      /matrix\(\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*,\s*([\d.e+\-]+)\s*\)/
+    );
+    if (!tm) return;
+
+    const sx = +tm[1], sy = +tm[4], txM = +tm[5], tyM = +tm[6];
+
+    // ── 1. Scale font-size ──────────────────────────────────────────────────
+    // Try style attribute first, then standalone font-size attribute.
+    // We scale the raw stored value by sx.
+    let fontScaled = false;
+
+    // style="...font-size:NNpx..." (browser may add spaces around colon)
+    const newStyle = style.replace(
+      /font-size\s*:\s*([\d.]+)\s*(px|pt|em|rem)?/i,
+      (_, num, unit) => {
+        fontScaled = true;
+        const scaled = (parseFloat(num) * sx).toFixed(3);
+        return `font-size:${scaled}${unit || 'px'}`;
+      }
+    );
+    if (fontScaled) {
+      textEl.setAttribute('style', newStyle);
+    } else {
+      // Fallback: standalone font-size attribute
+      const fAttr = textEl.getAttribute('font-size');
+      if (fAttr) {
+        const fNum = parseFloat(fAttr);
+        const unit = fAttr.replace(/[\d.\s]/g, '') || 'px';
+        textEl.setAttribute('font-size', `${(fNum * sx).toFixed(3)}${unit}`);
+      }
+    }
+
+    // Also scale any font-size on child tspans that have their own font-size
+    textEl.querySelectorAll('tspan').forEach(ts => {
+      const tsStyle = ts.getAttribute('style') || '';
+      if (tsStyle.includes('font-size')) {
+        ts.setAttribute('style', tsStyle.replace(
+          /font-size\s*:\s*([\d.]+)\s*(px|pt|em|rem)?/i,
+          (_, num, unit) => `font-size:${(parseFloat(num) * sx).toFixed(3)}${unit || 'px'}`
+        ));
+      }
+      const tsFAttr = ts.getAttribute('font-size');
+      if (tsFAttr) {
+        const unit = tsFAttr.replace(/[\d.\s]/g, '') || 'px';
+        ts.setAttribute('font-size', `${(parseFloat(tsFAttr) * sx).toFixed(3)}${unit}`);
+      }
+    });
+
+    // ── 2. Apply matrix to text element's own x/y ──────────────────────────
+    const elX = parseFloat(textEl.getAttribute('x') || 0);
+    const elY = parseFloat(textEl.getAttribute('y') || 0);
+    textEl.setAttribute('x', (sx * elX + txM).toFixed(3));
+    textEl.setAttribute('y', (sy * elY + tyM).toFixed(3));
+    textEl.removeAttribute('transform');
+
+    // ── 3. Apply matrix to tspan x/y ───────────────────────────────────────
+    textEl.querySelectorAll('tspan').forEach(ts => {
+      const tsX = ts.getAttribute('x');
+      const tsY = ts.getAttribute('y');
+      if (tsX !== null) ts.setAttribute('x', (sx * parseFloat(tsX) + txM).toFixed(3));
+      if (tsY !== null) ts.setAttribute('y', (sy * parseFloat(tsY) + tyM).toFixed(3));
+    });
+
+    matrixFixed++;
+    // Log the resulting font size for debugging in Warnings tab
+    const finalStyle = textEl.getAttribute('style') || '';
+    const fsFinal = finalStyle.match(/font-size\s*:\s*([\d.]+\s*(?:px|pt)?)/i);
+    const fsFinalAttr = textEl.getAttribute('font-size');
+    const fsReport = fsFinal ? fsFinal[1] : (fsFinalAttr || '?');
+    fixes.push(`  ↳ #${textEl.getAttribute('id') || '?'} font-size → ${fsReport}, x=${textEl.getAttribute('x')}, y=${textEl.getAttribute('y')}`);
+  });
+  if (matrixFixed) fixes.push(`Resolved matrix transform on ${matrixFixed} text element(s) → baked font-size + absolute coords`);
 
   // 5. Normalize font-family on text/tspan → Harmonia Sans Pro Cyr
   const HARMONIA = 'Harmonia Sans Pro Cyr';
