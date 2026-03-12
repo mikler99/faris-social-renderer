@@ -700,6 +700,61 @@
   }
 
   hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+  /* ── FIELD MAPPER ── */
+  .field-mapper { display:flex; flex-direction:column; height:100%; }
+  .field-mapper-header {
+    padding:14px 20px 10px; border-bottom:1px solid var(--border);
+    background:var(--surface2);
+  }
+  .field-mapper-header h4 {
+    font-size:11px; font-weight:700; letter-spacing:0.08em;
+    text-transform:uppercase; color:var(--ink); margin-bottom:4px;
+  }
+  .field-mapper-header p {
+    font-family:var(--mono); font-size:10px; color:var(--ink2); line-height:1.5;
+  }
+  .field-mapper-list { flex:1; overflow-y:auto; padding:10px 20px; }
+  .field-mapper-list::-webkit-scrollbar { width:3px; }
+  .field-mapper-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+  .mapper-row { margin-bottom:12px; }
+  .mapper-row-cols {
+    display:grid; grid-template-columns:1fr 14px 1fr;
+    align-items:center; gap:6px;
+  }
+  .mapper-preview {
+    background:var(--surface3); border:1px solid var(--border);
+    border-radius:var(--radius); padding:7px 10px;
+    font-family:var(--mono); font-size:10px; color:var(--ink2);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:default;
+  }
+  .mapper-preview.is-image {
+    color:var(--accent); border-color:var(--accent-border); background:var(--accent-light);
+  }
+  .mapper-arrow { text-align:center; color:var(--ink2); font-size:11px; }
+  .mapper-input {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:var(--radius); padding:7px 10px;
+    font-family:var(--mono); font-size:11px; color:var(--ink);
+    outline:none; width:100%; transition:border-color 0.15s;
+  }
+  .mapper-input:focus { border-color:var(--accent); }
+  .mapper-input.has-value { border-color:rgba(46,204,113,0.35); background:rgba(46,204,113,0.04); }
+  .mapper-input::placeholder { color:var(--ink2); opacity:0.5; }
+  .mapper-type-row { display:flex; gap:4px; margin-top:4px; padding-left:calc(50% + 13px); }
+  .mapper-type-btn {
+    font-family:var(--mono); font-size:9px; padding:2px 7px; border-radius:3px;
+    border:1px solid var(--border); background:var(--surface3); color:var(--ink2);
+    cursor:pointer; transition:all 0.1s;
+  }
+  .mapper-type-btn.active-text { background:var(--surface3); color:var(--ink); border-color:var(--ink2); }
+  .mapper-type-btn.active-image { background:var(--accent-light); color:var(--accent); border-color:var(--accent-border); }
+  .field-mapper-footer { padding:12px 20px; border-top:1px solid var(--border); }
+  .mapper-skip {
+    font-family:var(--mono); font-size:10px; color:var(--ink2); text-align:center;
+    padding:8px 20px 2px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;
+  }
+  .mapper-skip:hover { color:var(--ink); }
 </style>
 </head>
 <body>
@@ -776,6 +831,21 @@
       <div class="fields-empty">
         <p>No template loaded</p>
         <small>Upload an SVG to detect fields</small>
+      </div>
+    </div>
+
+    <!-- Field Mapper — shown when no IDs found -->
+    <div id="tab-mapper" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+      <div class="field-mapper">
+        <div class="field-mapper-header">
+          <h4>⚡ Map Fields</h4>
+          <p>No field IDs found. Name each element to make it injectable — leave blank to skip.</p>
+        </div>
+        <div class="field-mapper-list" id="mapperList"></div>
+        <div class="mapper-skip" onclick="skipMapper()">Skip — use SVG as-is</div>
+        <div class="field-mapper-footer">
+          <button class="btn btn-primary" onclick="applyFieldMap()">Apply Field Names →</button>
+        </div>
       </div>
     </div>
 
@@ -979,17 +1049,26 @@ function handleSvgFile(file) {
     scanResult.style.display = 'block';
     const errCount  = allWarnings.filter(w => w.type === 'error').length;
     const warnCount = allWarnings.filter(w => w.type === 'warn').length;
-    const summary = errCount > 0
-      ? `✕ ${errCount} error(s) — check Warnings tab`
-      : warnCount > 0
-        ? `⚠ ${fields.length} fields · ${warnCount} warning(s)`
-        : `✓ ${fields.length} fields · ${fixes.length} fix${fixes.length !== 1 ? 'es' : ''} applied`;
-    scanResult.innerHTML = `<div class="scan-result">${summary}</div>`;
 
-    renderFieldInputs(fields);
     renderWarnings(allWarnings);
-    updateRenderButton();
-    updatePayloadPreview();
+
+    if (fields.length === 0 && !errCount) {
+      // No IDs found — launch Field Mapper
+      const mappable = document.querySelectorAll && countMappableElements(svgContent);
+      scanResult.innerHTML = `<div class="scan-result" style="border-color:var(--yellow-border);background:var(--yellow-light);color:var(--yellow);">⚡ No field IDs — map ${mappable} element(s)</div>`;
+      buildFieldMapper(svgContent);
+    } else {
+      const summary = errCount > 0
+        ? `✕ ${errCount} error(s) — check Warnings tab`
+        : warnCount > 0
+          ? `⚠ ${fields.length} fields · ${warnCount} warning(s)`
+          : `✓ ${fields.length} fields · ${fixes.length} fix${fixes.length !== 1 ? 'es' : ''} applied`;
+      scanResult.innerHTML = `<div class="scan-result">${summary}</div>`;
+      showFieldsTab();
+      renderFieldInputs(fields);
+      updateRenderButton();
+      updatePayloadPreview();
+    }
 
     if (currentPreviewTab === 'svg') showSvgPreview();
   };
@@ -1322,6 +1401,117 @@ function openDesignCanvas() {
   }, { once: true });
 }
 
+// ---- FIELD MAPPER ----
+// Shown when detectFields() finds zero injectable fields (no IDs on any element).
+// Lets the user name each text/image element directly in the browser, then patches IDs
+// into svgContent and re-runs detection — no Illustrator changes needed.
+
+let mapperElements = [];
+
+function countMappableElements(svgString) {
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  return doc.querySelectorAll('text, image').length;
+}
+
+function buildFieldMapper(svgString) {
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  mapperElements = [];
+  const AUTO_ID = /^(svg|defs|layer|g\d|clip|mask|pattern|gradient|filter|rect\d|path\d|use\d|text\d|tspan\d)/i;
+
+  doc.querySelectorAll('text, image').forEach((el, i) => {
+    const tag = el.tagName.toLowerCase().replace(/.*:/, '');
+    const isImage = tag === 'image';
+    const textContent = isImage
+      ? '⬛ image placeholder'
+      : (el.textContent || '').trim().substring(0, 40) || '(empty)';
+    const existingId = el.getAttribute('id') || '';
+    const suggestedId = existingId && !AUTO_ID.test(existingId) ? existingId : '';
+    mapperElements.push({ index: i, tag, isImage, textContent, suggestedId, fieldType: isImage ? 'image' : 'text' });
+  });
+
+  document.getElementById('mapperList').innerHTML = mapperElements.map((el, i) => `
+    <div class="mapper-row">
+      <div class="mapper-row-cols">
+        <div class="mapper-preview${el.isImage ? ' is-image' : ''}" title="${el.textContent}">${el.textContent}</div>
+        <div class="mapper-arrow">→</div>
+        <input
+          class="mapper-input${el.suggestedId ? ' has-value' : ''}"
+          id="mapper-id-${i}" type="text"
+          placeholder="field_name"
+          value="${el.suggestedId}"
+          oninput="this.classList.toggle('has-value', this.value.length > 0)"
+          autocomplete="off" spellcheck="false"
+        />
+      </div>
+      <div class="mapper-type-row">
+        <button class="mapper-type-btn${el.fieldType==='text'?' active-text':''}" id="mtt-${i}" onclick="setMapperType(${i},'text')">◻ text</button>
+        <button class="mapper-type-btn${el.fieldType==='image'?' active-image':''}" id="mti-${i}" onclick="setMapperType(${i},'image')">⬛ image</button>
+      </div>
+    </div>
+  `).join('');
+
+  // Show mapper, hide everything else
+  document.getElementById('tab-fields').style.display = 'none';
+  document.getElementById('tab-mapper').style.display = 'flex';
+  document.getElementById('tab-payload').style.display = 'none';
+  document.getElementById('tab-warnings').style.display = 'none';
+  document.querySelectorAll('.tabs:first-of-type .tab').forEach((el, i) => el.classList.toggle('active', i === 0));
+}
+
+function setMapperType(index, type) {
+  mapperElements[index].fieldType = type;
+  document.getElementById(`mtt-${index}`).className = `mapper-type-btn${type==='text'?' active-text':''}`;
+  document.getElementById(`mti-${index}`).className = `mapper-type-btn${type==='image'?' active-image':''}`;
+}
+
+function applyFieldMap() {
+  const doc = new DOMParser().parseFromString(svgContent, 'image/svg+xml');
+  const allTextImage = [...doc.querySelectorAll('text, image')];
+  let patched = 0;
+
+  mapperElements.forEach((meta, i) => {
+    const fieldName = (document.getElementById(`mapper-id-${i}`)?.value || '').trim();
+    if (!fieldName) return;
+    const el = allTextImage[meta.index];
+    if (!el) return;
+    el.setAttribute('id', fieldName);
+    patched++;
+  });
+
+  if (patched === 0) { skipMapper(); return; }
+
+  let patchedSvg = new XMLSerializer().serializeToString(doc).replace(/<\?xml[^?]*\?>\s*/g, '');
+  svgContent = patchedSvg;
+
+  const { fields, warnings } = detectFields(svgContent);
+  detectedFields = fields;
+
+  document.getElementById('scanResult').innerHTML =
+    `<div class="scan-result" style="border-color:var(--green-border);background:var(--green-light);color:var(--green);">✓ ${fields.length} field(s) mapped and ready</div>`;
+
+  showFieldsTab();
+  renderFieldInputs(fields);
+  renderWarnings(warnings);
+  updateRenderButton();
+  updatePayloadPreview();
+  if (currentPreviewTab === 'svg') showSvgPreview();
+}
+
+function skipMapper() {
+  showFieldsTab();
+  renderFieldInputs([]);
+  updateRenderButton();
+}
+
+function showFieldsTab() {
+  document.getElementById('tab-fields').style.display = 'block';
+  document.getElementById('tab-mapper').style.display = 'none';
+  document.getElementById('tab-payload').style.display = 'none';
+  document.getElementById('tab-warnings').style.display = 'none';
+  currentTab = 'fields';
+  document.querySelectorAll('.tabs:first-of-type .tab').forEach((el, i) => el.classList.toggle('active', i === 0));
+}
+
 // ---- SMART FIELD DETECTION ----
 // Runs on the already-sanitized SVG.
 // Returns only text/image elements that are injectable data fields — not design shapes.
@@ -1488,7 +1678,12 @@ function renderWarnings(warnings) {
 
 // ---- Tabs ----
 function switchTab(tab) {
+  // If mapper is active and user clicks Fields tab, stay in mapper (it IS the fields view)
+  const mapperActive = document.getElementById('tab-mapper').style.display !== 'none';
+  if (tab === 'fields' && mapperActive) return;
+
   currentTab = tab;
+  document.getElementById('tab-mapper').style.display = 'none';
   ['fields', 'warnings', 'payload'].forEach(t => {
     document.getElementById(`tab-${t}`).style.display = t === tab ? (t === 'fields' ? 'block' : 'flex') : 'none';
     if (t === 'payload') document.getElementById(`tab-${t}`).style.display = t === tab ? 'block' : 'none';
