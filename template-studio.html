@@ -1514,18 +1514,33 @@ function applyFieldMap() {
   const allTextImage = [...doc.querySelectorAll('text, image')];
   let patched = 0;
 
+  // Get canvas center X from viewBox
+  const vb = (doc.documentElement.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  const canvasCenterX = vb[2] ? vb[2] / 2 : 540;
+
   mapperElements.forEach((meta, i) => {
     const fieldName = (document.getElementById(`mapper-id-${i}`)?.value || '').trim();
     if (!fieldName) return;
     const el = allTextImage[meta.index];
     if (!el) return;
     el.setAttribute('id', fieldName);
-    // Bake text-anchor for text elements
+
+    // Bake text-anchor + snap translate X for center/right-aligned text
     if (!meta.isImage && meta.anchor && meta.anchor !== 'left') {
       const anchorMap = { center: 'middle', right: 'end' };
       el.setAttribute('text-anchor', anchorMap[meta.anchor]);
-      // Also set on any tspan children
-      el.querySelectorAll('tspan').forEach(ts => ts.setAttribute('text-anchor', anchorMap[meta.anchor]));
+      el.querySelectorAll('tspan').forEach(ts => ts.setAttribute('x', '0'));
+
+      // Snap translate X: center → canvas midpoint, right → canvas right edge
+      const snapX = meta.anchor === 'center' ? canvasCenterX : (vb[2] || 1080);
+      const transform = el.getAttribute('transform') || '';
+      const newTransform = transform.replace(
+        /translate\(\s*([\d.+-]+)\s+([\d.+-]+)\s*\)/,
+        (_, _x, y) => `translate(${snapX} ${y})`
+      );
+      if (newTransform !== transform) {
+        el.setAttribute('transform', newTransform);
+      }
     }
     patched++;
   });
