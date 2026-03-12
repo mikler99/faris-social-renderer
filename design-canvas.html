@@ -167,6 +167,7 @@ body{background:var(--bg);color:var(--txt);font-family:'DM Sans',system-ui,sans-
         <svg id="main-svg" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1080" height="1440" viewBox="0 0 1080 1440">
           <rect id="__bg__" x="0" y="0" width="1080" height="1440" fill="white"/>
         </svg>
+        <div id="mbox" style="position:absolute;border:1px solid var(--acc);background:rgba(200,16,46,.07);display:none;pointer-events:none;z-index:5"></div>
         <div id="so">
           <div id="sr"></div>
           <div class="hdl" id="h-tl" data-h="tl"></div><div class="hdl" id="h-tc" data-h="tc"></div><div class="hdl" id="h-tr" data-h="tr"></div>
@@ -266,6 +267,8 @@ let drawing=false, drawEl=null, drawSt={x:0,y:0};
 let polyPts=[],polyOn=false;
 let dragOn=false, elSt0={};
 let editEl=null;
+let multiSel=new Set(),clipboard=null;
+let rubberOn=false,rubberSt={x:0,y:0};
 // ── SNAP ──
 const SNAP_THRESH = 10; // SVG units
 let snapLines = {x:[], y:[]}; // active snap lines for display
@@ -355,15 +358,22 @@ function hideSnapLines(){ svg.querySelectorAll('.snap-line').forEach(e=>e.remove
 // getBBox() gives SVG coordinates; multiply by Z for overlay pixels.
 // getBoundingClientRect() would give SCREEN pixels which are already scaled — wrong.
 function uSel(){
+  if(multiSel.size>1) return uSelMulti();
   if(!sel)return hSel();
   let b;
   try{b=sel.getBBox();}catch(e){return hSel();}
-  // #so/#ted inside #cw: coordinate space = raw SVG units. getBBox() returns SVG units. No Z multiply needed.
   const pad=4;
-  const x=b.x-pad, y=b.y-pad, w=b.width+pad*2, h=b.height+pad*2; // raw SVG units, no Z (overlay is inside scaled #cw)
+  const x=b.x-pad, y=b.y-pad, w=b.width+pad*2, h=b.height+pad*2;
   sr.style.cssText=`display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
   const pos={tl:[x,y],tc:[x+w/2,y],tr:[x+w,y],ml:[x,y+h/2],mr:[x+w,y+h/2],bl:[x,y+h],bc:[x+w/2,y+h],br:[x+w,y+h]};
   hdls.forEach(h=>{const[hx,hy]=pos[h.dataset.h]||[0,0];h.style.cssText=`display:block;left:${hx}px;top:${hy}px`;});
+}
+function uSelMulti(){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  multiSel.forEach(el=>{try{const b=el.getBBox();minX=Math.min(minX,b.x);minY=Math.min(minY,b.y);maxX=Math.max(maxX,b.x+b.width);maxY=Math.max(maxY,b.y+b.height);}catch(e){}});
+  const pad=4,x=minX-pad,y=minY-pad,w=maxX-minX+pad*2,h=maxY-minY+pad*2;
+  sr.style.cssText=`display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+  hdls.forEach(h=>h.style.display='none');
 }
 function hSel(){sr.style.display='none';hdls.forEach(h=>h.style.display='none');}
 
@@ -408,7 +418,24 @@ function onDown(e){
   }
 
   const clicked=topEl(e.target);
-  if(!clicked||clicked.id==='__bg__'||clicked.id==='__tp__'){desel();return;}
+
+  // Shift+click = toggle multi-select
+  if(e.shiftKey&&clicked&&clicked.id!=='__bg__'&&clicked.id!=='__tp__'){
+    toggleMultiSel(clicked);return;
+  }
+
+  if(!clicked||clicked.id==='__bg__'||clicked.id==='__tp__'){
+    rubberOn=true;rubberSt=p;
+    const rb=document.getElementById('mbox');
+    rb.style.cssText=`display:block;left:${p.x}px;top:${p.y}px;width:0;height:0`;
+    if(!e.shiftKey)clearMultiSel();
+    desel();return;
+  }
+
+  // Clicking selected element in multi-mode = drag all
+  if(multiSel.size>1&&multiSel.has(clicked)){startMultiDrag(e);return;}
+
+  clearMultiSel();
   selEl(clicked);startDrag(e,clicked);
 }
 
@@ -443,16 +470,30 @@ hdls.forEach(h=>{
     let bb;try{bb=sel.getBBox();}catch(err){return;}
     const st={x:bb.x,y:bb.y,w:bb.width,h:bb.height};
     const mm=ev=>{
-      const dx=(ev.clientX-dragStart.mx)/Z,dy=(ev.clientY-dragStart.my)/Z;
+      let dx=(ev.clientX-dragStart.mx)/Z,dy=(ev.clientY-dragStart.my)/Z;
+      if(!ev.altKey){
+        const{gx,gy}=getSnapGuides(sel);
+        if(hnd.includes('r')){const s=snapVal(st.x+st.w+dx,gx,SNAP_THRESH);if(s.delta)dx+=s.delta;showSnapLines([s.snapped],[]);}
+        else if(hnd.includes('l')){const s=snapVal(st.x+dx,gx,SNAP_THRESH);if(s.delta)dx+=s.delta;showSnapLines([s.snapped],[]);}
+        if(hnd.includes('b')){const s=snapVal(st.y+st.h+dy,gy,SNAP_THRESH);if(s.delta)dy+=s.delta;showSnapLines([],[s.snapped]);}
+        else if(hnd.includes('t')){const s=snapVal(st.y+dy,gy,SNAP_THRESH);if(s.delta)dy+=s.delta;showSnapLines([],[s.snapped]);}
+      }
       apResize(sel,hnd,dx,dy,st);uSel();uPD();
     };
-    const mu=()=>{window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);};
+    const mu=()=>{hideSnapLines();window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);};
     window.addEventListener('mousemove',mm);window.addEventListener('mouseup',mu);
   });
 });
 
 // ── MOUSE MOVE (drawing) ──
 window.addEventListener('mousemove',e=>{
+  if(rubberOn){
+    const p=svgPt(e);
+    const x=Math.min(p.x,rubberSt.x),y=Math.min(p.y,rubberSt.y);
+    const w=Math.abs(p.x-rubberSt.x),h=Math.abs(p.y-rubberSt.y);
+    document.getElementById('mbox').style.cssText=`display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
+    return;
+  }
   if(!drawing||!drawEl)return;
   const p=svgPt(e);
   const dx=p.x-drawSt.x,dy=p.y-drawSt.y;
@@ -466,6 +507,22 @@ window.addEventListener('mousemove',e=>{
   uSel();
 });
 window.addEventListener('mouseup',e=>{
+  if(rubberOn){
+    rubberOn=false;
+    const rb=document.getElementById('mbox');
+    const rx=parseFloat(rb.style.left),ry=parseFloat(rb.style.top);
+    const rw=parseFloat(rb.style.width)||0,rh=parseFloat(rb.style.height)||0;
+    rb.style.display='none';
+    if(rw>4&&rh>4){
+      const hits=[...[...svg.children].filter(el=>{
+        if(el.id==='__bg__'||el.id==='__tp__')return false;
+        try{const b=el.getBBox();return b.x+b.width>rx&&b.x<rx+rw&&b.y+b.height>ry&&b.y<ry+rh;}catch(e){return false;}
+      })];
+      if(hits.length===1){selEl(hits[0]);}
+      else if(hits.length>1){clearMultiSel();hits.forEach(el=>multiSel.add(el));sel=hits[hits.length-1];uSel();rLay();showPP(sel);}
+    }
+    return;
+  }
   if(drawing&&drawEl){drawing=false;selEl(drawEl);drawEl=null;setTool('select');}
 });
 
@@ -598,7 +655,71 @@ function cEdit(){if(!editEl)return;ted.style.display='none';editEl=null;}
 
 // ── SELECTION ──
 function selEl(el){cEdit();sel=el;uSel();showPP(el);rLay();}
-function desel(){cEdit();sel=null;hSel();document.getElementById('ns').style.display='flex';document.getElementById('pp').style.display='none';rLay();}
+
+// ── MULTI-SELECT ──
+function toggleMultiSel(el){
+  if(multiSel.has(el)){
+    multiSel.delete(el);
+    if(multiSel.size===1){const only=[...multiSel][0];clearMultiSel();selEl(only);}
+    else{uSel();rLay();}
+  } else {
+    if(sel&&!multiSel.has(sel))multiSel.add(sel);
+    multiSel.add(el);sel=el;
+    uSel();rLay();showPP(el);
+  }
+}
+function clearMultiSel(){multiSel.clear();}
+function selectAll(){
+  clearMultiSel();
+  const els=[...svg.children].filter(c=>c.id!=='__bg__'&&c.id!=='__tp__');
+  if(!els.length)return;
+  els.forEach(el=>multiSel.add(el));
+  sel=els[els.length-1];uSel();rLay();showPP(sel);
+}
+function startMultiDrag(e){
+  const dragStart={mx:e.clientX,my:e.clientY};
+  const sts=new Map();multiSel.forEach(el=>sts.set(el,capPos(el)));
+  snap();
+  const mm=ev=>{
+    const dx=(ev.clientX-dragStart.mx)/Z,dy=(ev.clientY-dragStart.my)/Z;
+    multiSel.forEach(el=>apMove(el,dx,dy,sts.get(el)));uSel();
+  };
+  const mu=()=>{hideSnapLines();window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);};
+  window.addEventListener('mousemove',mm);window.addEventListener('mouseup',mu);
+}
+
+// ── CONTEXT MENU ──
+function openCtx(e){
+  e.preventDefault();closeCtx();
+  const hasSel=sel||multiSel.size>0,multi=multiSel.size>1;
+  ['cm-dup','cm-grp','cm-fwd','cm-bwd','cm-del','cm-sep-del'].forEach(id=>document.getElementById(id).style.display='none');
+  if(hasSel){document.getElementById('cm-dup').style.display='flex';document.getElementById('cm-del').style.display='flex';document.getElementById('cm-sep-del').style.display='block';}
+  if(multi)document.getElementById('cm-grp').style.display='flex';
+  if(hasSel&&!multi){document.getElementById('cm-fwd').style.display='flex';document.getElementById('cm-bwd').style.display='flex';}
+  const m=document.getElementById('ctx');
+  m.style.cssText=`display:block;left:${Math.min(e.clientX,window.innerWidth-190)}px;top:${Math.min(e.clientY,window.innerHeight-280)}px`;
+}
+function closeCtx(){document.getElementById('ctx').style.display='none';}
+document.addEventListener('click',e=>{if(!document.getElementById('ctx').contains(e.target))closeCtx();});
+document.getElementById('canvas-area').addEventListener('contextmenu',openCtx);
+
+function ctxDup(){closeCtx();snap();
+  if(multiSel.size>1){multiSel.forEach(el=>{const cl=el.cloneNode(true);cl.setAttribute('id',nid(cl.tagName));svg.appendChild(cl);apMove(cl,20,20,capPos(cl));});rLay();}
+  else dupS();}
+function ctxDel(){closeCtx();
+  if(multiSel.size>1){snap();multiSel.forEach(el=>svg.removeChild(el));clearMultiSel();desel();rLay();}
+  else delS();}
+function ctxCopy(){closeCtx();if(sel)clipboard=sel.cloneNode(true);}
+function ctxPaste(){closeCtx();if(!clipboard)return;snap();const cl=clipboard.cloneNode(true);cl.setAttribute('id',nid(cl.tagName));svg.appendChild(cl);apMove(cl,20,20,capPos(cl));selEl(cl);rLay();}
+function ctxGroup(){
+  if(multiSel.size<2)return;closeCtx();snap();
+  const g=document.createElementNS(NS,'g');g.setAttribute('id',nid('group'));
+  const sorted=[...multiSel].sort((a,b)=>[...svg.children].indexOf(a)-[...svg.children].indexOf(b));
+  svg.insertBefore(g,sorted[0]);sorted.forEach(el=>g.appendChild(el));
+  clearMultiSel();selEl(g);rLay();
+}
+
+function desel(){cEdit();clearMultiSel();sel=null;hSel();document.getElementById('ns').style.display='flex';document.getElementById('pp').style.display='none';rLay();}
 
 // ── PROPS PANEL ──
 function showPP(el){document.getElementById('ns').style.display='none';document.getElementById('pp').style.display='block';uPD();}
@@ -778,6 +899,11 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&tool==='polygon'&&polyOn){finPoly();return;}
   if((e.key==='Delete'||e.key==='Backspace')&&sel){delS();return;}
   if((e.ctrlKey||e.metaKey)&&e.key==='d'){e.preventDefault();dupS();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key==='a'){e.preventDefault();selectAll();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key==='c'){if(sel)ctxCopy();return;}
+  if((e.ctrlKey||e.metaKey)&&e.key==='v'){ctxPaste();return;}
+  if(e.key===']'&&!inp){bFwd();return;}
+  if(e.key==='['&&!inp){sBwd();return;}
   if(sel&&['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
     e.preventDefault();snap();
     const d=e.shiftKey?10:1,st=capPos(sel);
@@ -802,10 +928,26 @@ function pPts(el){return(el.getAttribute('points')||'').trim().split(/\s+/).map(
 function toH(c){if(!c||c==='none')return'#000000';if(/^#[0-9a-fA-F]{6}$/.test(c))return c;if(/^#[0-9a-fA-F]{3}$/.test(c))return'#'+[c[1],c[1],c[2],c[2],c[3],c[3]].join('');const m=c.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);if(m)return'#'+[m[1],m[2],m[3]].map(n=>parseInt(n).toString(16).padStart(2,'0')).join('');return'#000000';}
 
 // Expose globals
-Object.assign(window,{setTool,aZ,zFit,showSM,closeSM,apP,applySM,doImport,doExport,sendToStudio,hLogo,hImport,pc,sh,ttp,sAnc,delS,dupS,bFwd,sBwd,selById,delById,undo,redo,finPoly});
+Object.assign(window,{setTool,aZ,zFit,showSM,closeSM,apP,applySM,doImport,doExport,sendToStudio,hLogo,hImport,pc,sh,ttp,sAnc,delS,dupS,bFwd,sBwd,selById,delById,undo,redo,finPoly,selectAll,ctxDup,ctxDel,ctxCopy,ctxPaste,ctxGroup,closeCtx,openCtx});
 
 // INIT
 zFit();rLay();
 </script>
+
+<div id="ctx" style="position:fixed;background:var(--surf);border:1px solid var(--bdr2);border-radius:7px;padding:4px;min-width:175px;z-index:2000;box-shadow:0 8px 32px rgba(0,0,0,.6);display:none">
+  <div id="cm-dup"    style="display:none;padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;align-items:center;gap:8px;transition:background .08s;white-space:nowrap" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="ctxDup()">Duplicate <span style="margin-left:auto;font-size:9px;color:var(--txt3);font-family:var(--mono)">⌘D</span></div>
+  <div id="cm-grp"    style="display:none;padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;align-items:center;gap:8px" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="ctxGroup()">Group Selection</div>
+  <div style="height:1px;background:var(--bdr);margin:3px 0"></div>
+  <div id="cm-fwd"    style="display:none;padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;align-items:center;gap:8px" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="bFwd()">Bring Forward <span style="margin-left:auto;font-size:9px;color:var(--txt3);font-family:var(--mono)">]</span></div>
+  <div id="cm-bwd"    style="display:none;padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;align-items:center;gap:8px" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="sBwd()">Send Backward <span style="margin-left:auto;font-size:9px;color:var(--txt3);font-family:var(--mono)">[</span></div>
+  <div style="height:1px;background:var(--bdr);margin:3px 0"></div>
+  <div style="padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:8px" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="ctxCopy()">Copy <span style="margin-left:auto;font-size:9px;color:var(--txt3);font-family:var(--mono)">⌘C</span></div>
+  <div style="padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:8px" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="ctxPaste()">Paste <span style="margin-left:auto;font-size:9px;color:var(--txt3);font-family:var(--mono)">⌘V</span></div>
+  <div style="height:1px;background:var(--bdr);margin:3px 0"></div>
+  <div style="padding:6px 12px;border-radius:4px;font-size:11px;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:8px" onmouseenter="this.style.background='var(--surf3)'" onmouseleave="this.style.background=''" onclick="selectAll()">Select All <span style="margin-left:auto;font-size:9px;color:var(--txt3);font-family:var(--mono)">⌘A</span></div>
+  <div id="cm-sep-del" style="display:none;height:1px;background:var(--bdr);margin:3px 0"></div>
+  <div id="cm-del"    style="display:none;padding:6px 12px;border-radius:4px;font-size:11px;color:#ff6b6b;cursor:pointer;align-items:center;gap:8px" onmouseenter="this.style.background='rgba(255,107,107,.1)'" onmouseleave="this.style.background=''" onclick="ctxDel()">Delete <span style="margin-left:auto;font-size:9px;color:#ff6b6b;font-family:var(--mono)">⌫</span></div>
+</div>
+
 </body>
 </html>
