@@ -750,6 +750,8 @@
   .mapper-type-btn.active-text { background:var(--surface3); color:var(--ink); border-color:var(--ink2); }
   .mapper-type-btn.active-image { background:var(--accent-light); color:var(--accent); border-color:var(--accent-border); }
   .mapper-type-btn.active-center { background: rgba(240,180,41,0.12); color:var(--yellow); border-color:rgba(240,180,41,0.35); }
+  .mapper-type-btn.active-left { background: rgba(99,179,237,0.12); color:#63b3ed; border-color:rgba(99,179,237,0.35); }
+  .mapper-type-btn.active-right { background: rgba(104,211,145,0.12); color:#68d391; border-color:rgba(104,211,145,0.35); }
   .field-mapper-footer { padding:12px 20px; border-top:1px solid var(--border); }
   .mapper-skip {
     font-family:var(--mono); font-size:10px; color:var(--ink2); text-align:center;
@@ -772,6 +774,7 @@
   <div class="header-meta">
     <div class="header-meta-dot"></div>
     Full Out® Creative Engine
+    <span style="margin-left:10px; padding:2px 7px; background:var(--surface3); border:1px solid var(--border); border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.04em; color:var(--ink2); font-family:var(--mono);">v1.4.0</span>
   </div>
   <button onclick="openDesignCanvas()" style="margin-left:auto;height:32px;padding:0 14px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;">
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="12" height="12" rx="1.5"/><path d="M4 10l2-2 2 2 4-4"/></svg>
@@ -1626,7 +1629,7 @@ function buildFieldMapper(svgString) {
       <div class="mapper-type-row">
         <button class="mapper-type-btn${el.fieldType==='text'?' active-text':''}" id="mtt-${i}" onclick="setMapperType(${i},'text')">◻ text</button>
         <button class="mapper-type-btn${el.fieldType==='image'?' active-image':''}" id="mti-${i}" onclick="setMapperType(${i},'image')">⬛ image</button>
-        ${!el.isImage ? `<button class="mapper-type-btn" id="mta-${i}" onclick="setMapperAnchor(${i})" title="Toggle text alignment">⇔ left</button>` : ''}
+        ${!el.isImage ? `<button class="mapper-type-btn${el.anchor==='center'?' active-center':el.anchor==='right'?' active-right':' active-left'}" id="mta-${i}" onclick="setMapperAnchor(${i})" title="Toggle text alignment">${el.anchor==='center'?'⇔ center':el.anchor==='right'?'⇒ right':'⇐ left'}</button>` : ''}
       </div>
     </div>
   `).join('');
@@ -1652,7 +1655,8 @@ function setMapperAnchor(index) {
   mapperElements[index].anchor = next;
   const btn = document.getElementById(`mta-${index}`);
   btn.textContent = labels[next];
-  btn.className = `mapper-type-btn${next === 'center' ? ' active-center' : ''}`;
+  const anchorClass = { left: 'active-left', center: 'active-center', right: 'active-right' };
+  btn.className = `mapper-type-btn ${anchorClass[next]}`;
 }
 
 function applyFieldMap() {
