@@ -494,18 +494,47 @@ function stripMixBlendMode(svg) {
             `</radialGradient>`
           );
         } else {
-          // Linear: clamp gradient to visible canvas bounds so it starts transparent
-          // at the canvas edge (y=0 for top vignette, y=rectTop for bottom vignette)
+          // Linear vignette: transparent→dark, with feathering at any edge that falls
+          // within the visible canvas — prevents the hard cutoff line resvg renders.
+          //
+          // Case A: rect extends above canvas (top vignette, ry < 0, bottom within canvas)
+          //   gradient y1=0 (canvas top, transparent) → y2=rectBottom
+          //   BUT: the dark end at rectBottom creates a hard line mid-canvas.
+          //   Fix: peak at 80% through, fade back to 0 at rectBottom.
+          //   This makes the rect boundary always transparent.
+          //
+          // Case B: rect starts mid-canvas (bottom vignette, ry > 0)
+          //   gradient y1=rectTop (transparent) → y2=canvas bottom (or rectBottom if off-canvas)
+          //   Top edge is already soft (starts at 0). Bottom edge is at canvas edge — fine.
+          //
           const rectBottom = ry + rh;
           const rectTop    = ry;
-          const gradY1 = Math.max(rectTop, 0);          // transparent end: canvas top or rect top
-          const gradY2 = Math.min(rectBottom, canvasH); // dark end: rect bottom or canvas bottom
-          newGradientDefs.push(
-            `<linearGradient id="${elemId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse">` +
-            `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
-            `<stop offset="1" stop-color="black" stop-opacity="${meta.opacity}"/>` +
-            `</linearGradient>`
-          );
+          const topAbove   = rectTop < 0;           // rect starts above canvas
+          const bottomInCanvas = rectBottom < canvasH; // rect ends inside canvas (not off bottom)
+
+          if (topAbove && bottomInCanvas) {
+            // Top vignette: feather at both ends — peak in middle, fade to 0 at rect bottom
+            const gradY1 = 0;
+            const gradY2 = rectBottom;
+            const peakOffset = 0.75; // darkest point at 75% through the visible portion
+            newGradientDefs.push(
+              `<linearGradient id="${elemId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse">` +
+              `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
+              `<stop offset="${peakOffset}" stop-color="black" stop-opacity="${meta.opacity}"/>` +
+              `<stop offset="1" stop-color="black" stop-opacity="0"/>` +
+              `</linearGradient>`
+            );
+          } else {
+            // Bottom vignette or fully off-canvas: simple transparent→dark, soft at top
+            const gradY1 = Math.max(rectTop, 0);
+            const gradY2 = Math.min(rectBottom, canvasH);
+            newGradientDefs.push(
+              `<linearGradient id="${elemId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse">` +
+              `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
+              `<stop offset="1" stop-color="black" stop-opacity="${meta.opacity}"/>` +
+              `</linearGradient>`
+            );
+          }
         }
       }
       newFill = `url(#${elemGradMap[elemKey]})`;

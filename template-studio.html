@@ -774,7 +774,7 @@
   <div class="header-meta">
     <div class="header-meta-dot"></div>
     Full Out® Creative Engine
-    <span style="margin-left:10px; padding:2px 7px; background:var(--surface3); border:1px solid var(--border); border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.04em; color:var(--ink2); font-family:var(--mono);">v1.4.5</span>
+    <span style="margin-left:10px; padding:2px 7px; background:var(--surface3); border:1px solid var(--border); border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.04em; color:var(--ink2); font-family:var(--mono);">v1.4.6</span>
   </div>
   <button onclick="openDesignCanvas()" style="margin-left:auto;height:32px;padding:0 14px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;">
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="12" height="12" rx="1.5"/><path d="M4 10l2-2 2 2 4-4"/></svg>
@@ -1578,9 +1578,17 @@ function sanitizeSvg(svgString) {
               const cx = rx + rw / 2, cy = ry + rh / 2, r = Math.max(rw, rh) / 2;
               newGradDefs.push(`<radialGradient id="${elemId}" cx="${cx}" cy="${cy}" r="${r}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="black" stop-opacity="${meta.opacity}"/><stop offset="1" stop-color="black" stop-opacity="0"/></radialGradient>`);
             } else {
-              const gradY1 = Math.max(ry, 0);
-              const gradY2 = Math.min(ry + rh, canvasH);
-              newGradDefs.push(`<linearGradient id="${elemId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="black" stop-opacity="0"/><stop offset="1" stop-color="black" stop-opacity="${meta.opacity}"/></linearGradient>`);
+              const rectBottom = ry + rh;
+              const topAbove = ry < 0;
+              const bottomInCanvas = rectBottom < canvasH;
+              if (topAbove && bottomInCanvas) {
+                // Top vignette: feather at bottom edge to avoid hard cutoff line
+                newGradDefs.push(`<linearGradient id="${elemId}" x1="0" y1="0" x2="0" y2="${rectBottom}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="black" stop-opacity="0"/><stop offset="0.75" stop-color="black" stop-opacity="${meta.opacity}"/><stop offset="1" stop-color="black" stop-opacity="0"/></linearGradient>`);
+              } else {
+                const gradY1 = Math.max(ry, 0);
+                const gradY2 = Math.min(rectBottom, canvasH);
+                newGradDefs.push(`<linearGradient id="${elemId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="black" stop-opacity="0"/><stop offset="1" stop-color="black" stop-opacity="${meta.opacity}"/></linearGradient>`);
+              }
             }
           }
           newFill = `url(#${elemGradMap[elemKey]})`;
@@ -1644,7 +1652,20 @@ function buildFieldMapper(svgString) {
     mapperElements.push({ index: i, tag, isImage, textContent, suggestedId, fieldType: isImage ? 'image' : 'text', anchor: 'center' });
   });
 
-  document.getElementById('mapperList').innerHTML = mapperElements.map((el, i) => `
+  document.getElementById('mapperList').innerHTML = `
+    <datalist id="field-name-suggestions">
+      <option value="street_address"/>
+      <option value="city"/>
+      <option value="price"/>
+      <option value="units_sold"/>
+      <option value="percentage_change"/>
+      <option value="background"/>
+      <option value="agent_name"/>
+      <option value="brokerage"/>
+      <option value="list_date"/>
+      <option value="sold_date"/>
+    </datalist>
+  ` + mapperElements.map((el, i) => `
     <div class="mapper-row">
       <div class="mapper-row-cols">
         <div class="mapper-preview${el.isImage ? ' is-image' : ''}" title="${el.textContent}">${el.textContent}</div>
@@ -1652,7 +1673,8 @@ function buildFieldMapper(svgString) {
         <input
           class="mapper-input${el.suggestedId ? ' has-value' : ''}"
           id="mapper-id-${i}" type="text"
-          placeholder="field_name"
+          list="field-name-suggestions"
+          placeholder="${el.isImage ? 'background' : i === 0 ? 'street_address' : i === 1 ? 'city' : i === 2 ? 'price' : 'field_name'}"
           value="${el.suggestedId}"
           oninput="this.classList.toggle('has-value', this.value.length > 0)"
           autocomplete="off" spellcheck="false"
