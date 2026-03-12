@@ -774,7 +774,7 @@
   <div class="header-meta">
     <div class="header-meta-dot"></div>
     Full Out® Creative Engine
-    <span style="margin-left:10px; padding:2px 7px; background:var(--surface3); border:1px solid var(--border); border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.04em; color:var(--ink2); font-family:var(--mono);">v1.4.6</span>
+    <span style="margin-left:10px; padding:2px 7px; background:var(--surface3); border:1px solid var(--border); border-radius:4px; font-size:10px; font-weight:600; letter-spacing:.04em; color:var(--ink2); font-family:var(--mono);">v1.4.7</span>
   </div>
   <button onclick="openDesignCanvas()" style="margin-left:auto;height:32px;padding:0 14px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;">
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="12" height="12" rx="1.5"/><path d="M4 10l2-2 2 2 4-4"/></svg>
@@ -1500,10 +1500,11 @@ function sanitizeSvg(svgString) {
   out = out.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g, (_, x) => { singleTranslateFixed++; return `translate(${x}, 0)`; });
   if (singleTranslateFixed) fixes.push(`Expanded ${singleTranslateFixed} single-arg translate(x) → translate(x, 0) for resvg compatibility`);
 
-  // 5.10. Replace mix-blend-mode gradient overlays with equivalent non-blend SVG gradients.
-  // Uses userSpaceOnUse with element geometry so gradients start transparent at the
-  // canvas edge, not at the rect's off-canvas origin — fixes the 'box' artifact.
-  {
+  // 5.10. mix-blend-mode: SKIPPED in Template Studio.
+  // Chrome renders mix-blend-mode natively and perfectly — identical to Design Canvas.
+  // stripMixBlendMode() is only needed in server.js where resvg doesn't support it.
+  // Converting gradients here only introduces visible artifacts in the browser preview.
+  if (false) { // skiped — browser handles mix-blend-mode natively
     const classProps = {};
     for (const [, selectors, body] of out.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
       const hasBlend = /mix-blend-mode/i.test(body);
@@ -1603,9 +1604,9 @@ function sanitizeSvg(svgString) {
       if (newGradDefs.length > 0) {
         out = out.replace(/(<defs[^>]*>)/, `$1\n${newGradDefs.join('\n')}`);
       }
-      fixes.push(`Converted ${blendClasses.size} mix-blend-mode overlay class(es) → equivalent SVG gradients (resvg fallback)`);
+      fixes.push(`Blend overlays preserved (browser renders mix-blend-mode natively)`);
     }
-  }
+  } // end if(false) skip block
 
   return { svg: out, fixes };
 }

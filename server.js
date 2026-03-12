@@ -366,6 +366,112 @@ function injectTextAnchor(svg) {
  * Both use gradientUnits="objectBoundingBox" so the shape/rotation of the element is preserved.
  * The opacity attribute is removed from each element (baked into the gradient stop colors).
  */
+/**
+ * Fixes SVGs that were already processed by an older version of Template Studio
+ * which used objectBoundingBox for the faris-overlay gradients. Those produce a
+ * hard-cutoff line at the rect boundary when rendered by resvg.
+ *
+ * Detects faris-overlay-* linearGradients with objectBoundingBox and replaces them
+ * with per-element userSpaceOnUse gradients with feathering at any rect edge that
+ * falls within the visible canvas area.
+ */
+function fixLegacyOverlayGradients(svg) {
+  // Only act if there are legacy faris-overlay gradients with objectBoundingBox
+  if (!/<linearGradient[^>]*id="faris-overlay-\d+"[^>]*objectBoundingBox/.test(svg) &&
+      !/<radialGradient[^>]*id="faris-overlay-\d+"[^>]*objectBoundingBox/.test(svg)) {
+    return svg;
+  }
+
+  const vbMatch = svg.match(/viewBox="([^"]*)"/i);
+  const vb = vbMatch ? vbMatch[1].trim().split(/[\s,]+/).map(Number) : [0, 0, 1080, 1350];
+  const canvasH = vb[3] || 1350;
+
+  // Extract opacity for each faris-overlay gradient from its stop-opacity values
+  const gradOpacity = {}; // gradId → effective opacity (max stop-opacity)
+  const gradIsRadial = {}; // gradId → boolean
+  for (const [, tag, attrs] of svg.matchAll(/<(linear|radial)Gradient([^>]*)objectBoundingBox[\s\S]*?<\/\1Gradient>/gi)) {
+    const idM = attrs.match(/id="(faris-overlay-\d+)"/);
+    if (!idM) continue;
+    const id = idM[1];
+    const stops = [...svg.matchAll(new RegExp(`(?<=${id}[\\s\\S]{0,2000}?)stop-opacity="([\\d.]+)"`, 'g'))];
+    const maxOp = Math.max(...[...svg.matchAll(
+      new RegExp(`<(?:linear|radial)Gradient[^>]*id="${id}"[\\s\\S]*?<\\/(?:linear|radial)Gradient>`, 'g')
+    )].flatMap(([block]) =>
+      [...block.matchAll(/stop-opacity="([\d.]+)"/g)].map(m => parseFloat(m[1]))
+    ), 0.2);
+    gradOpacity[id] = maxOp;
+    gradIsRadial[id] = tag.toLowerCase() === 'radial';
+  }
+
+  if (Object.keys(gradOpacity).length === 0) return svg;
+
+  // Replace each rect that uses a faris-overlay gradient with a new per-element gradient
+  let counter = 1000; // start high to avoid collision with any existing IDs
+  const newDefs = [];
+
+  svg = svg.replace(/<rect\b([^>]*?)\/>/g, (match, attrs) => {
+    const fillM = attrs.match(/\bfill="url\(#(faris-overlay-\d+)\)"/);
+    if (!fillM) return match;
+    const gradId = fillM[1];
+    const opacity = gradOpacity[gradId] ?? 0.2;
+    const isRadial = gradIsRadial[gradId] ?? false;
+
+    const rx = parseFloat(attrs.match(/\bx="([^"]*)"/)?.[1] ?? '0');
+    const ry = parseFloat(attrs.match(/\by="([^"]*)"/)?.[1] ?? '0');
+    const rw = parseFloat(attrs.match(/\bwidth="([^"]*)"/)?.[1] ?? '0');
+    const rh = parseFloat(attrs.match(/\bheight="([^"]*)"/)?.[1] ?? '0');
+
+    const newId = `faris-fixed-${++counter}`;
+
+    if (isRadial) {
+      const cx = rx + rw / 2, cy = ry + rh / 2, r = Math.max(rw, rh) / 2;
+      newDefs.push(
+        `<radialGradient id="${newId}" cx="${cx}" cy="${cy}" r="${r}" gradientUnits="userSpaceOnUse">` +
+        `<stop offset="0" stop-color="black" stop-opacity="${opacity}"/>` +
+        `<stop offset="1" stop-color="black" stop-opacity="0"/>` +
+        `</radialGradient>`
+      );
+    } else {
+      const rectBottom = ry + rh;
+      const topAbove = ry < 0;
+      const bottomInCanvas = rectBottom < canvasH;
+      if (topAbove && bottomInCanvas) {
+        // Top vignette: feather at bottom edge to avoid hard cutoff line
+        newDefs.push(
+          `<linearGradient id="${newId}" x1="0" y1="0" x2="0" y2="${rectBottom}" gradientUnits="userSpaceOnUse">` +
+          `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
+          `<stop offset="0.75" stop-color="black" stop-opacity="${opacity}"/>` +
+          `<stop offset="1" stop-color="black" stop-opacity="0"/>` +
+          `</linearGradient>`
+        );
+      } else {
+        const gradY1 = Math.max(ry, 0);
+        const gradY2 = Math.min(rectBottom, canvasH);
+        newDefs.push(
+          `<linearGradient id="${newId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse">` +
+          `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
+          `<stop offset="1" stop-color="black" stop-opacity="${opacity}"/>` +
+          `</linearGradient>`
+        );
+      }
+    }
+
+    const newAttrs = attrs.replace(/\bfill="url\(#faris-overlay-\d+\)"/, `fill="url(#${newId})"`);
+    return `<rect${newAttrs}/>`;
+  });
+
+  // Inject new gradients into defs (or create defs if missing)
+  if (newDefs.length > 0) {
+    if (/<defs[^>]*>/.test(svg)) {
+      svg = svg.replace(/(<defs[^>]*>)/, `$1\n${newDefs.join('\n')}`);
+    } else {
+      svg = svg.replace(/(<svg[^>]*>)/, `$1\n<defs>\n${newDefs.join('\n')}\n</defs>`);
+    }
+  }
+
+  return svg;
+}
+
 function stripMixBlendMode(svg) {
   const styleMatch = svg.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
   if (!styleMatch) return svg;
@@ -566,7 +672,8 @@ async function renderSvgToPng(svg, fields) {
   svg = injectGlobalFontCss(svg);
   svg = injectTextAnchor(svg);
   svg = fixSingleArgTranslate(svg);
-  svg = stripMixBlendMode(svg);
+  svg = fixLegacyOverlayGradients(svg); // fix old objectBoundingBox faris-overlay gradients
+  svg = stripMixBlendMode(svg);         // convert mix-blend-mode for fresh/unprocessed SVGs
 
   const svgImageIds = detectImageIds(svg);
   const svgAllIds = detectIds(svg);
