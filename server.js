@@ -80,8 +80,12 @@ function detectImageIds(svg) {
   const ids = new Set();
   const re = /<image[^>]*\bid="([^"]+)"[^>]*>/g;
   let m;
-  while ((m = re.exec(svg)) !== null) {
-    ids.add(m[1]);
+  while ((m = re.exec(svg)) !== null) { ids.add(m[1]); }
+  // Design Canvas placeholders: <g data-field="image" id="..."> (attr order varies)
+  const re2 = /<g\b[^>]*\bdata-field="image"\b[^>]*>/g;
+  while ((m = re2.exec(svg)) !== null) {
+    const idM = m[0].match(/\bid="([^"]+)"/);
+    if (idM) ids.add(idM[1]);
   }
   return ids;
 }
@@ -144,14 +148,36 @@ function replaceTextById(svg, id, newText, opts = {}) {
 function replaceImageHref(svg, id, dataUriOrUrl) {
   const safe = escapeXml(dataUriOrUrl);
 
+  // Standard <image> elements
   svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bhref=")[^"]*(")`, "m"),
+    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bhref=")[^"]*(")`  , "m"),
     `$1${safe}$2`
   );
   svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bxlink:href=")[^"]*(")`, "m"),
+    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bxlink:href=")[^"]*(")`  , "m"),
     `$1${safe}$2`
   );
+
+  // Design Canvas placeholder group: <g data-field="image" id="ID">...</g>
+  // Replace entire <g>...</g> with a proper <image> element
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const gRe = new RegExp(
+    `<g\\b[^>]*(?:data-field="image"[^>]*id="${escapedId}"|id="${escapedId}"[^>]*data-field="image")[^>]*>[\\s\\S]*?<\\/g>`,
+    "m"
+  );
+  const gMatch = svg.match(gRe);
+  if (gMatch) {
+    const block = gMatch[0];
+    // Extract dimensions from first <rect> inside the group
+    const rx = (block.match(/\bx="([^"]*)"/) || [])[1] || "0";
+    const ry = (block.match(/\by="([^"]*)"/) || [])[1] || "0";
+    const rw = (block.match(/\bwidth="([^"]*)"/) || [])[1] || "100";
+    const rh = (block.match(/\bheight="([^"]*)"/) || [])[1] || "100";
+    svg = svg.replace(gRe,
+      `<image id="${id}" x="${rx}" y="${ry}" width="${rw}" height="${rh}" ` +
+      `href="${safe}" preserveAspectRatio="xMidYMid slice"/>`
+    );
+  }
 
   return svg;
 }
@@ -271,8 +297,10 @@ app.get("/templates/:name/fields", (req, res) => {
     const imageIds = detectImageIds(svg);
     const allIds = detectIds(svg);
 
+    // Exclude purely auto-generated structural IDs from Inkscape/Illustrator
+    const AUTO_STRUCT = /^(svg\d|defs\d?|namedview\d?|layer\d|g\d+|clipPath\d|mask\d|pattern\d|metadata\d)$/i;
     const fields = [...allIds]
-      .filter((id) => id !== "svg1" && !id.startsWith("defs") && !id.startsWith("g"))
+      .filter((id) => !AUTO_STRUCT.test(id))
       .map((id) => ({
         id,
         type: imageIds.has(id) ? "image_url" : "text",
