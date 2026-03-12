@@ -939,6 +939,15 @@ function hImport(e){
     const bg=svg.querySelector('#__bg__');if(bg){bg.setAttribute('width',cW);bg.setAttribute('height',cH);}
     desel();
     [...svg.children].filter(c=>c.id!=='__bg__').forEach(c=>svg.removeChild(c));
+    // Merge <defs> from imported SVG into canvas <defs> (create one if needed).
+    // Preserves gradients, clip paths, styles referenced by content elements.
+    const impDefs=imp.querySelector('defs');
+    if(impDefs){
+      let canvasDefs=svg.querySelector('defs');
+      if(!canvasDefs){canvasDefs=document.createElementNS('http://www.w3.org/2000/svg','defs');svg.insertBefore(canvasDefs,svg.firstChild);}
+      [...canvasDefs.children].forEach(c=>c.remove());
+      [...impDefs.children].forEach(child=>{canvasDefs.appendChild(document.importNode(child,true));});
+    }
     [...imp.children].forEach(child=>{
       const t=child.tagName.toLowerCase();
       if(['defs','metadata','sodipodi:namedview','namedview'].includes(t))return;
@@ -984,7 +993,10 @@ function bldSVG(){
   // Deduplicate __bg__ rects (can appear twice if SVG was re-imported)
   const bgs=cl.querySelectorAll('#__bg__');for(let i=1;i<bgs.length;i++)bgs[i].remove();
   cl.setAttribute('xmlns',NS);cl.setAttribute('xmlns:xlink','http://www.w3.org/1999/xlink');
-  return`<?xml version="1.0" encoding="UTF-8"?>\n${cl.outerHTML}`;
+  // Fix single-arg translate(x) → translate(x, 0) for resvg compatibility.
+  // resvg incorrectly treats translate(x) as translate(x, x) causing image offsets.
+  let out=cl.outerHTML.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g,'translate($1, 0)');
+  return`<?xml version="1.0" encoding="UTF-8"?>\n${out}`;
 }
 function doExport(){
   const b=new Blob([bldSVG()],{type:'image/svg+xml'});
