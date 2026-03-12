@@ -5,6 +5,26 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Faris Design Canvas</title>
 <style>
+
+@font-face {
+  font-family: 'Harmonia Sans Pro Cyr';
+  font-weight: 400;
+  font-style: normal;
+  src: url('https://raw.githubusercontent.com/mikler99/faris-social-renderer/main/fonts/HarmoniaSansProCyr-Regular.otf') format('opentype');
+}
+@font-face {
+  font-family: 'Harmonia Sans Pro Cyr';
+  font-weight: 600;
+  font-style: normal;
+  src: url('https://raw.githubusercontent.com/mikler99/faris-social-renderer/main/fonts/HarmoniaSansProCyr-SemiBd.otf') format('opentype');
+}
+@font-face {
+  font-family: 'Harmonia Sans Pro Cyr';
+  font-weight: 700;
+  font-style: normal;
+  src: url('https://raw.githubusercontent.com/mikler99/faris-social-renderer/main/fonts/HarmoniaSansProCyr-Bold.otf') format('opentype');
+}
+
 :root{
   --bg:#0f0f11;--surf:#18181c;--surf2:#202026;--surf3:#28282f;
   --bdr:#2e2e38;--bdr2:#3a3a48;--txt:#eeeef4;--txt2:#8888a0;--txt3:#55556a;
@@ -922,6 +942,7 @@ function hImport(e){
     [...imp.children].forEach(child=>{
       const t=child.tagName.toLowerCase();
       if(['defs','metadata','sodipodi:namedview','namedview'].includes(t))return;
+      if(child.getAttribute('id')==='__bg__')return;
       const cl=document.importNode(child,true);
       if(!cl.getAttribute('id'))cl.setAttribute('id',nid(t));
       svg.appendChild(cl);
@@ -960,6 +981,8 @@ function applySM(){
 function bldSVG(){
   const cl=svg.cloneNode(true);
   cl.querySelectorAll('#__tp__,.sl').forEach(e=>e.remove());
+  // Deduplicate __bg__ rects (can appear twice if SVG was re-imported)
+  const bgs=cl.querySelectorAll('#__bg__');for(let i=1;i<bgs.length;i++)bgs[i].remove();
   cl.setAttribute('xmlns',NS);cl.setAttribute('xmlns:xlink','http://www.w3.org/1999/xlink');
   return`<?xml version="1.0" encoding="UTF-8"?>\n${cl.outerHTML}`;
 }

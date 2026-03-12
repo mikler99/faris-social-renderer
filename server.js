@@ -20,11 +20,12 @@ const TEMPLATES_DIR = path.join(__dirname, "templates");
 const FONTS_DIR = path.join(__dirname, "fonts");
 
 // Font files
-const FONT_REGULAR = path.join(FONTS_DIR, "HarmoniaSansProCyr-Regular.otf");
+const FONT_REGULAR  = path.join(FONTS_DIR, "HarmoniaSansProCyr-Regular.otf");
 const FONT_SEMIBOLD = path.join(FONTS_DIR, "HarmoniaSansProCyr-SemiBd.otf");
+const FONT_BOLD     = path.join(FONTS_DIR, "HarmoniaSansProCyr-Bold.otf");
 
 // Validate fonts exist on boot
-for (const p of [FONT_REGULAR, FONT_SEMIBOLD]) {
+for (const p of [FONT_REGULAR, FONT_SEMIBOLD, FONT_BOLD]) {
   if (!fs.existsSync(p)) {
     console.warn(`⚠️  Font file not found: ${p}`);
   }
@@ -146,21 +147,25 @@ function replaceTextById(svg, id, newText, opts = {}) {
  * Replace href / xlink:href on an <image> element matching id="<id>".
  */
 function replaceImageHref(svg, id, dataUriOrUrl) {
-  const safe = escapeXml(dataUriOrUrl);
-
-  // Standard <image> elements
-  svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bhref=")[^"]*(")`  , "m"),
-    `$1${safe}$2`
-  );
-  svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${id}"[^>]*\\bxlink:href=")[^"]*(")`  , "m"),
-    `$1${safe}$2`
-  );
-
-  // Design Canvas placeholder group: <g data-field="image" id="ID">...</g>
-  // Replace entire <g>...</g> with a proper <image> element
+  // NOTE: Do NOT escapeXml the href value — data URIs are base64 (safe chars only),
+  // and escaping would produce &amp; / &quot; etc. inside the attribute, breaking resvg.
+  const href = String(dataUriOrUrl);
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 1. Standard <image id="ID" href="..."> elements
+  svg = svg.replace(
+    new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*\\bhref=")[^"]*(")`  , "m"),
+    `$1${href}$2`
+  );
+  // 2. Standard <image id="ID" xlink:href="..."> (Illustrator / older SVG)
+  svg = svg.replace(
+    new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*\\bxlink:href=")[^"]*(")`  , "m"),
+    `$1${href}$2`
+  );
+
+  // 3. Design Canvas placeholder: <g id="ID" data-field="image">...</g>
+  //    Replace the entire group with a proper <image> element.
+  //    Attr order varies (id-first or data-field-first), so match both.
   const gRe = new RegExp(
     `<g[^>]*(?:data-field="image"[^>]*id="${escapedId}"|id="${escapedId}"[^>]*data-field="image")[^>]*>[\\s\\S]*?<\\/g>`,
     "m"
@@ -168,14 +173,16 @@ function replaceImageHref(svg, id, dataUriOrUrl) {
   const gMatch = svg.match(gRe);
   if (gMatch) {
     const block = gMatch[0];
-    // Extract dimensions from first <rect> inside the group
-    const rx = (block.match(/\bx="([^"]*)"/) || [])[1] || "0";
-    const ry = (block.match(/\by="([^"]*)"/) || [])[1] || "0";
-    const rw = (block.match(/\bwidth="([^"]*)"/) || [])[1] || "100";
-    const rh = (block.match(/\bheight="([^"]*)"/) || [])[1] || "100";
+    // Pull rect dimensions from the first child <rect>
+    const rectM = block.match(/<rect\b[^/]*/);
+    const rectStr = rectM ? rectM[0] : block;
+    const rx = (rectStr.match(/\bx="([^"]*)"/) || [])[1] || "0";
+    const ry = (rectStr.match(/\by="([^"]*)"/) || [])[1] || "0";
+    const rw = (rectStr.match(/\bwidth="([^"]*)"/) || [])[1] || "100";
+    const rh = (rectStr.match(/\bheight="([^"]*)"/) || [])[1] || "100";
     svg = svg.replace(gRe,
       `<image id="${id}" x="${rx}" y="${ry}" width="${rw}" height="${rh}" ` +
-      `href="${safe}" preserveAspectRatio="xMidYMid slice"/>`
+      `href="${href}" preserveAspectRatio="xMidYMid slice"/>`
     );
   }
 
@@ -250,7 +257,7 @@ async function renderSvgToPng(svg, fields) {
   const resvg = new Resvg(svg, {
     fitTo: { mode: "original" },
     font: {
-      fontFiles: [FONT_REGULAR, FONT_SEMIBOLD].filter((p) => fs.existsSync(p)),
+      fontFiles: [FONT_REGULAR, FONT_SEMIBOLD, FONT_BOLD].filter((p) => fs.existsSync(p)),
       loadSystemFonts: false,
     },
   });
