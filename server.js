@@ -293,9 +293,20 @@ function injectTextAnchor(svg) {
 
 // ---- Core render logic ----
 // Shared by both POST /render and POST /render/:template
+/**
+ * resvg misinterprets single-argument translate(x) as translate(x, x) instead of translate(x, 0).
+ * Illustrator exports image transforms like translate(-472.76) scale(.34) with a single-arg translate.
+ * This causes the image to shift up by the translate amount, leaving black bars at the bottom.
+ * Fix: expand all single-arg translate(x) → translate(x, 0) throughout the SVG.
+ */
+function fixSingleArgTranslate(svg) {
+  return svg.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g, 'translate($1, 0)');
+}
+
 async function renderSvgToPng(svg, fields) {
   svg = injectGlobalFontCss(svg);
   svg = injectTextAnchor(svg);
+  svg = fixSingleArgTranslate(svg);
 
   const svgImageIds = detectImageIds(svg);
   const svgAllIds = detectIds(svg);

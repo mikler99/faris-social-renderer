@@ -1418,6 +1418,14 @@ function sanitizeSvg(svgString) {
     .replace(/\s+xmlns:rdf="[^"]*"/g, '')
     .replace(/\s+xmlns:svg="[^"]*"/g, '');
 
+  // 5.9. Fix single-argument translate(x) → translate(x, 0).
+  // resvg incorrectly treats translate(x) as translate(x, x) instead of translate(x, 0).
+  // Illustrator exports image transforms like translate(-472.76) scale(.34) — the single-arg
+  // form causes the image to shift up by the translate amount, leaving black bars at the bottom.
+  let singleTranslateFixed = 0;
+  out = out.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g, (_, x) => { singleTranslateFixed++; return `translate(${x}, 0)`; });
+  if (singleTranslateFixed) fixes.push(`Expanded ${singleTranslateFixed} single-arg translate(x) → translate(x, 0) for resvg compatibility`);
+
   return { svg: out, fixes };
 }
 
