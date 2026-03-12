@@ -294,11 +294,86 @@ function injectTextAnchor(svg) {
 // ---- Core render logic ----
 // Shared by both POST /render and POST /render/:template
 /**
- * resvg misinterprets single-argument translate(x) as translate(x, x) instead of translate(x, 0).
- * Illustrator exports image transforms like translate(-472.76) scale(.34) with a single-arg translate.
- * This causes the image to shift up by the translate amount, leaving black bars at the bottom.
- * Fix: expand all single-arg translate(x) → translate(x, 0) throughout the SVG.
+ * resvg does not support mix-blend-mode. Illustrator templates use multiply-blend gradient
+ * overlays to darken photos (vignettes, text-area backing). Without blend mode support,
+ * gradient fills render as raw white-to-black bands creating visible artifacts.
+ *
+ * Fix:
+ *  1. Find all CSS classes that declare mix-blend-mode.
+ *  2. For each such class: read its opacity value (default 1).
+ *  3. Replace any gradient fill (url(#...)) on that class with fill="none" in CSS.
+ *  4. On actual SVG elements using those classes: inject fill="rgba(0,0,0,{opacity})"
+ *     directly as an attribute and remove the opacity attribute (baked into rgba).
+ *     → This approximates the multiply-darken intent without needing blend mode support.
+ *  5. Strip mix-blend-mode from the CSS rules.
  */
+function stripMixBlendMode(svg) {
+  const styleMatch = svg.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+  if (!styleMatch) return svg;
+  const cssText = styleMatch[1];
+
+  // Build map: className → { hasBlend, opacity, hasFill }
+  // First pass: collect per-class properties
+  const classProps = {};
+  for (const [, selectors, body] of cssText.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const hasBlend = /mix-blend-mode/i.test(body);
+    const opacityMatch = body.match(/(?:^|;)\s*opacity\s*:\s*([\d.]+)/);
+    const hasFill = /\bfill\s*:\s*url\(/i.test(body);
+    for (const [, cls] of selectors.matchAll(/\.([\w-]+)/g)) {
+      if (!classProps[cls]) classProps[cls] = { hasBlend: false, opacity: null, hasFill: false };
+      if (hasBlend) classProps[cls].hasBlend = true;
+      if (opacityMatch) classProps[cls].opacity = parseFloat(opacityMatch[1]);
+      if (hasFill) classProps[cls].hasFill = true;
+    }
+  }
+
+  const blendClasses = new Set(Object.entries(classProps).filter(([,v]) => v.hasBlend).map(([k]) => k));
+  if (blendClasses.size === 0) return svg;
+
+  // Strip mix-blend-mode and gradient fills from CSS
+  let fixed = svg.replace(/<style([^>]*)>([\s\S]*?)<\/style>/gi, (_, attrs, body) => {
+    let cleaned = body.replace(/\s*mix-blend-mode\s*:[^;}\n]+[;]?/gi, '');
+    // Remove gradient fill references from blend classes
+    cleaned = cleaned.replace(/([^{}]+)\{([^}]*)\}/g, (rule, selectors, props) => {
+      const cls = [...selectors.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
+      if (!cls.some(c => blendClasses.has(c))) return rule;
+      return rule.replace(/\bfill\s*:\s*url\([^)]*\)\s*;?/gi, '');
+    });
+    return `<style${attrs}>${cleaned}</style>`;
+  });
+
+  // Replace elements: inject fill=rgba(0,0,0,opacity) directly, remove opacity attr
+  fixed = fixed.replace(/<(rect|path|circle|ellipse|polygon|polyline)\b([^>]*?)(\/>|>)/g, (match, tag, attrs, close) => {
+    const classMatch = attrs.match(/\bclass="([^"]*)"/);
+    if (!classMatch) return match;
+    const classes = classMatch[1].split(/\s+/);
+    if (!classes.some(c => blendClasses.has(c))) return match;
+
+    // Find opacity: element attribute first, then CSS class
+    const elOpacityMatch = attrs.match(/\bopacity="([\d.]+)"/);
+    let opacity = elOpacityMatch ? parseFloat(elOpacityMatch[1]) : null;
+    if (opacity === null) {
+      for (const cls of classes) {
+        if (classProps[cls]?.opacity !== null && classProps[cls]?.opacity !== undefined) {
+          opacity = classProps[cls].opacity; break;
+        }
+      }
+    }
+    opacity = opacity ?? 0.25; // sensible default
+
+    const solidFill = `rgba(0,0,0,${opacity})`;
+
+    // Remove existing fill and opacity attrs, then inject solid fill
+    let newAttrs = attrs
+      .replace(/\bfill="[^"]*"\s*/g, '')
+      .replace(/\bopacity="[^"]*"\s*/g, '');
+    newAttrs = newAttrs + ` fill="${solidFill}"`;
+    return `<${tag}${newAttrs}${close}`;
+  });
+
+  return fixed;
+}
+
 function fixSingleArgTranslate(svg) {
   return svg.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g, 'translate($1, 0)');
 }
@@ -307,6 +382,7 @@ async function renderSvgToPng(svg, fields) {
   svg = injectGlobalFontCss(svg);
   svg = injectTextAnchor(svg);
   svg = fixSingleArgTranslate(svg);
+  svg = stripMixBlendMode(svg);
 
   const svgImageIds = detectImageIds(svg);
   const svgAllIds = detectIds(svg);

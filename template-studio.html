@@ -1442,6 +1442,63 @@ function sanitizeSvg(svgString) {
   out = out.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g, (_, x) => { singleTranslateFixed++; return `translate(${x}, 0)`; });
   if (singleTranslateFixed) fixes.push(`Expanded ${singleTranslateFixed} single-arg translate(x) → translate(x, 0) for resvg compatibility`);
 
+  // 5.10. Replace mix-blend-mode gradient overlays with solid rgba(0,0,0,opacity).
+  // resvg does not support mix-blend-mode. Illustrator uses multiply-blend gradients
+  // to darken photos (vignettes, bottom text-area backing). Without blend mode, gradient
+  // fills render as raw white→black bands (e.g. white wash at top, dark bar at bottom).
+  //
+  // Fix: for each CSS class with mix-blend-mode:
+  //   - Read its opacity value
+  //   - Replace gradient fill (url(#...)) with nothing in CSS
+  //   - On matching SVG elements: inject fill="rgba(0,0,0,{opacity})" directly
+  //   - Remove the opacity attribute (baked into rgba)
+  //   - Strip mix-blend-mode from CSS
+  // Result: overlays darken the photo proportionally to their original opacity — no artifacts.
+  {
+    // Build map: className → { hasBlend, opacity }
+    const classProps = {};
+    for (const [, selectors, body] of out.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const hasBlend = /mix-blend-mode/i.test(body);
+      const opacityMatch = body.match(/(?:^|;)\s*opacity\s*:\s*([\d.]+)/);
+      for (const [, cls] of selectors.matchAll(/\.([\w-]+)/g)) {
+        if (!classProps[cls]) classProps[cls] = { hasBlend: false, opacity: null };
+        if (hasBlend) classProps[cls].hasBlend = true;
+        if (opacityMatch) classProps[cls].opacity = parseFloat(opacityMatch[1]);
+      }
+    }
+    const blendClasses = new Set(Object.entries(classProps).filter(([,v]) => v.hasBlend).map(([k]) => k));
+    if (blendClasses.size > 0) {
+      // Strip mix-blend-mode and gradient fills from CSS
+      out = out.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/gi, (_, open, body, close) => {
+        let cleaned = body.replace(/\s*mix-blend-mode\s*:[^;}\n]+[;]?/gi, '');
+        cleaned = cleaned.replace(/([^{}]+)\{([^}]*)\}/g, (rule, selectors) => {
+          const cls = [...selectors.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
+          if (!cls.some(c => blendClasses.has(c))) return rule;
+          return rule.replace(/\bfill\s*:\s*url\([^)]*\)\s*;?/gi, '');
+        });
+        return open + cleaned + close;
+      });
+      // Replace elements with solid rgba fill
+      out = out.replace(/<(rect|path|circle|ellipse|polygon|polyline)\b([^>]*?)(\/>|>)/g, (match, tag, attrs, close) => {
+        const cm = attrs.match(/\bclass="([^"]*)"/);
+        if (!cm) return match;
+        const classes = cm[1].split(/\s+/);
+        if (!classes.some(c => blendClasses.has(c))) return match;
+        const elOp = attrs.match(/\bopacity="([\d.]+)"/);
+        let opacity = elOp ? parseFloat(elOp[1]) : null;
+        if (opacity === null) {
+          for (const cls of classes) {
+            if (classProps[cls]?.opacity != null) { opacity = classProps[cls].opacity; break; }
+          }
+        }
+        opacity = opacity ?? 0.25;
+        let newAttrs = attrs.replace(/\bfill="[^"]*"\s*/g, '').replace(/\bopacity="[^"]*"\s*/g, '');
+        return `<${tag}${newAttrs} fill="rgba(0,0,0,${opacity})"${close}`;
+      });
+      fixes.push(`Converted ${blendClasses.size} mix-blend-mode overlay class(es) → solid rgba(0,0,0,opacity) (resvg fallback)`);
+    }
+  }
+
   return { svg: out, fixes };
 }
 
