@@ -82,7 +82,7 @@ function detectImageIds(svg) {
   let m;
   while ((m = re.exec(svg)) !== null) { ids.add(m[1]); }
   // Design Canvas placeholders: <g data-field="image" id="..."> (attr order varies)
-  const re2 = /<g\b[^>]*\bdata-field="image"\b[^>]*>/g;
+  const re2 = /<g\b[^>]*\bdata-field="image"[^>]*>/g;
   while ((m = re2.exec(svg)) !== null) {
     const idM = m[0].match(/\bid="([^"]+)"/);
     if (idM) ids.add(idM[1]);
@@ -162,7 +162,7 @@ function replaceImageHref(svg, id, dataUriOrUrl) {
   // Replace entire <g>...</g> with a proper <image> element
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const gRe = new RegExp(
-    `<g\\b[^>]*(?:data-field="image"[^>]*id="${escapedId}"|id="${escapedId}"[^>]*data-field="image")[^>]*>[\\s\\S]*?<\\/g>`,
+    `<g[^>]*(?:data-field="image"[^>]*id="${escapedId}"|id="${escapedId}"[^>]*data-field="image")[^>]*>[\\s\\S]*?<\\/g>`,
     "m"
   );
   const gMatch = svg.match(gRe);
