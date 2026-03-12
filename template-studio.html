@@ -1315,9 +1315,9 @@ function sanitizeSvg(svgString) {
   let fontFixed = 0;
 
   // Rewrite <style> block: replace PostScript font-family + inject font-weight in CSS rules
-  const styleEl = doc.querySelector('style');
-  if (styleEl) {
-    const originalCss = styleEl.textContent;
+  const fontStyleEl = doc.querySelector('style');
+  if (fontStyleEl) {
+    const originalCss = fontStyleEl.textContent;
     // Process rule-by-rule via regex on the text content
     const newCss = originalCss.replace(
       /([^{}]+)\{([^}]*)\}/g,
@@ -1337,7 +1337,7 @@ function sanitizeSvg(svgString) {
         return `${selectors}{${newProps}}`;
       }
     );
-    if (newCss !== originalCss) styleEl.textContent = newCss;
+    if (newCss !== originalCss) fontStyleEl.textContent = newCss;
   }
 
   // Also handle font-family set as an attribute directly on text/tspan elements
