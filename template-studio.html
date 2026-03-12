@@ -1291,22 +1291,77 @@ function sanitizeSvg(svgString) {
   });
   if (matrixFixed) fixes.push(`Resolved matrix transform on ${matrixFixed} text element(s) → baked font-size + absolute coords`);
 
-  // 5. Normalize font-family on text/tspan → Harmonia Sans Pro Cyr
-  const HARMONIA = 'Harmonia Sans Pro Cyr';
+  // 5. Normalize font-family → 'Harmonia Sans Pro Cyr' + inject correct font-weight.
+  // Illustrator exports PostScript names as font-family values (e.g. HarmoniaSansProCyr-SemiBd).
+  // resvg (fontdb) matches fonts by family name + weight, NOT by PostScript name.
+  // Without this fix all weights fall back to Regular (the first loaded font).
+  //
+  // We rewrite CSS rules that declare a Harmonia PostScript font-family to use the
+  // canonical family name + the matching font-weight integer value.
+  const HARMONIA_FAMILY = 'Harmonia Sans Pro Cyr';
+  const HARMONIA_MAP = {
+    'HarmoniaSansProCyrRegular':  400, 'HarmoniaSansProCyr-Regular':  400,
+    'HarmoniaSansProCyrSemiBd':   600, 'HarmoniaSansProCyr-SemiBd':   600,
+    'HarmoniaSansProCyrBold':     700, 'HarmoniaSansProCyr-Bold':      700,
+    'HarmoniaSansProRegular':     400, 'HarmoniaSansPro-Regular':      400,
+    'HarmoniaSansProSemiBd':      600, 'HarmoniaSansPro-SemiBd':       600,
+    'HarmoniaSansProBold':        700, 'HarmoniaSansPro-Bold':         700,
+  };
+  function harmoniaWeight(raw) {
+    const key = raw.replace(/['"'\s]/g, '');
+    return HARMONIA_MAP[key] ?? null;
+  }
+
   let fontFixed = 0;
+
+  // Rewrite <style> block: replace PostScript font-family + inject font-weight in CSS rules
+  const styleEl = doc.querySelector('style');
+  if (styleEl) {
+    const originalCss = styleEl.textContent;
+    // Process rule-by-rule via regex on the text content
+    const newCss = originalCss.replace(
+      /([^{}]+)\{([^}]*)\}/g,
+      (rule, selectors, props) => {
+        const ffMatch = props.match(/font-family\s*:\s*([^;,\n}]+)/i);
+        if (!ffMatch) return rule;
+        // Check first value in font-family list (PostScript name)
+        const firstFf = ffMatch[1].split(',')[0].trim().replace(/['"]/g, '');
+        const weight = harmoniaWeight(firstFf);
+        if (weight === null) return rule; // not a Harmonia PostScript name
+        // Replace font-family with canonical name, remove any existing font-weight, inject weight
+        let newProps = props
+          .replace(/\bfont-weight\s*:[^;}\n]+[;]?/gi, '')
+          .replace(/font-family\s*:[^;}\n]+/gi,
+            `font-family: '${HARMONIA_FAMILY}'; font-weight: ${weight}`);
+        fontFixed++;
+        return `${selectors}{${newProps}}`;
+      }
+    );
+    if (newCss !== originalCss) styleEl.textContent = newCss;
+  }
+
+  // Also handle font-family set as an attribute directly on text/tspan elements
   doc.querySelectorAll('text, tspan').forEach(el => {
     const ff = el.getAttribute('font-family') || '';
-    if (ff && !ff.includes('Harmonia') && !ff.toLowerCase().includes('sans-serif')) {
-      el.setAttribute('font-family', HARMONIA);
-      fontFixed++;
+    if (ff) {
+      const weight = harmoniaWeight(ff.split(',')[0].trim());
+      if (weight !== null) {
+        el.setAttribute('font-family', HARMONIA_FAMILY);
+        el.setAttribute('font-weight', weight);
+        fontFixed++;
+      } else if (!ff.includes('Harmonia') && !ff.toLowerCase().includes('sans-serif')) {
+        el.setAttribute('font-family', HARMONIA_FAMILY);
+        fontFixed++;
+      }
     }
     const st = el.getAttribute('style') || '';
     if (st.includes('font-family') && !st.includes('Harmonia')) {
-      el.setAttribute('style', st.replace(/font-family\s*:[^;]+/g, `font-family:'${HARMONIA}'`));
+      el.setAttribute('style', st.replace(/font-family\s*:[^;]+/g, `font-family:'${HARMONIA_FAMILY}'`));
       fontFixed++;
     }
   });
-  if (fontFixed) fixes.push(`Normalized ${fontFixed} font-family declaration(s) → Harmonia Sans Pro Cyr`);
+
+  if (fontFixed) fixes.push(`Normalized ${fontFixed} font declaration(s) → Harmonia Sans Pro Cyr with correct font-weight`);
 
   // 5.5. Strip embedded base64 blobs from <image> elements so they become injectable placeholders.
   // Illustrator embeds the source image as a data URI in xlink:href. The renderer can't swap a data URI —
@@ -1442,60 +1497,70 @@ function sanitizeSvg(svgString) {
   out = out.replace(/\btranslate\(\s*([-\d.]+)\s*\)/g, (_, x) => { singleTranslateFixed++; return `translate(${x}, 0)`; });
   if (singleTranslateFixed) fixes.push(`Expanded ${singleTranslateFixed} single-arg translate(x) → translate(x, 0) for resvg compatibility`);
 
-  // 5.10. Replace mix-blend-mode gradient overlays with solid rgba(0,0,0,opacity).
-  // resvg does not support mix-blend-mode. Illustrator uses multiply-blend gradients
-  // to darken photos (vignettes, bottom text-area backing). Without blend mode, gradient
-  // fills render as raw white→black bands (e.g. white wash at top, dark bar at bottom).
-  //
-  // Fix: for each CSS class with mix-blend-mode:
-  //   - Read its opacity value
-  //   - Replace gradient fill (url(#...)) with nothing in CSS
-  //   - On matching SVG elements: inject fill="rgba(0,0,0,{opacity})" directly
-  //   - Remove the opacity attribute (baked into rgba)
-  //   - Strip mix-blend-mode from CSS
-  // Result: overlays darken the photo proportionally to their original opacity — no artifacts.
+  // 5.10. Replace mix-blend-mode gradient overlays with equivalent non-blend SVG gradients.
+  // resvg does not support mix-blend-mode. Illustrator uses multiply-blend gradients:
+  //   white→black linear + multiply  ≡  transparent→dark linear  (normal blend, same result)
+  //   black→white radial + multiply  ≡  dark→transparent radial  (normal blend, same result)
+  // We inject new faris-overlay-N gradients into <defs> and point the blend elements at them.
+  // This preserves the gradient fade shape while eliminating all artifacts.
   {
-    // Build map: className → { hasBlend, opacity }
     const classProps = {};
     for (const [, selectors, body] of out.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
       const hasBlend = /mix-blend-mode/i.test(body);
-      const opacityMatch = body.match(/(?:^|;)\s*opacity\s*:\s*([\d.]+)/);
+      const opM  = body.match(/(?:^|;|\s)opacity\s*:\s*([\d.]+)/);
+      const fillM = body.match(/\bfill\s*:\s*url\(#([\w-]+)\)/i);
       for (const [, cls] of selectors.matchAll(/\.([\w-]+)/g)) {
-        if (!classProps[cls]) classProps[cls] = { hasBlend: false, opacity: null };
+        if (!classProps[cls]) classProps[cls] = { hasBlend: false, opacity: null, gradientId: null };
         if (hasBlend) classProps[cls].hasBlend = true;
-        if (opacityMatch) classProps[cls].opacity = parseFloat(opacityMatch[1]);
+        if (opM)   classProps[cls].opacity    = parseFloat(opM[1]);
+        if (fillM) classProps[cls].gradientId = fillM[1];
       }
     }
     const blendClasses = new Set(Object.entries(classProps).filter(([,v]) => v.hasBlend).map(([k]) => k));
     if (blendClasses.size > 0) {
-      // Strip mix-blend-mode and gradient fills from CSS
+      const defsM = out.match(/<defs[^>]*>([\s\S]*?)<\/defs>/i);
+      const defsText = defsM ? defsM[1] : '';
+      let overlayCounter = 0;
+      const overlayMap = {};
+      for (const cls of blendClasses) {
+        const { gradientId, opacity } = classProps[cls];
+        if (!gradientId || overlayMap[gradientId]) continue;
+        const isRadial = new RegExp(`<radialGradient[^>]*\\bid="${gradientId}"`,'i').test(defsText);
+        overlayMap[gradientId] = { newId: `faris-overlay-${++overlayCounter}`, isRadial, opacity: opacity ?? 0.25 };
+      }
+      const newGrads = Object.values(overlayMap).map(({ newId, isRadial, opacity }) =>
+        isRadial
+          ? `<radialGradient id="${newId}" cx="0.5" cy="0.5" r="0.5" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="black" stop-opacity="${opacity}"/><stop offset="1" stop-color="black" stop-opacity="0"/></radialGradient>`
+          : `<linearGradient id="${newId}" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="black" stop-opacity="0"/><stop offset="1" stop-color="black" stop-opacity="${opacity}"/></linearGradient>`
+      ).join('\n');
+      if (newGrads) out = out.replace(/(<defs[^>]*>)/, `$1\n${newGrads}`);
+      // Strip mix-blend-mode and gradient fill/opacity from pure-blend-only CSS rules
       out = out.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/gi, (_, open, body, close) => {
         let cleaned = body.replace(/\s*mix-blend-mode\s*:[^;}\n]+[;]?/gi, '');
-        cleaned = cleaned.replace(/([^{}]+)\{([^}]*)\}/g, (rule, selectors) => {
-          const cls = [...selectors.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
-          if (!cls.some(c => blendClasses.has(c))) return rule;
-          return rule.replace(/\bfill\s*:\s*url\([^)]*\)\s*;?/gi, '');
+        cleaned = cleaned.replace(/([^{}]+)\{([^}]*)\}/g, (rule, selectors, props) => {
+          const ruleCls = [...selectors.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
+          if (!ruleCls.length || !ruleCls.every(c => blendClasses.has(c))) return rule;
+          const newProps = props
+            .replace(/\bfill\s*:\s*url\([^)]*\)\s*;?/gi, '')
+            .replace(/\bopacity\s*:[^;}\n]+[;]?/gi, '');
+          return `${selectors}{${newProps}}`;
         });
         return open + cleaned + close;
       });
-      // Replace elements with solid rgba fill
+      // Update element fill attr → new overlay gradient, remove opacity attr
       out = out.replace(/<(rect|path|circle|ellipse|polygon|polyline)\b([^>]*?)(\/>|>)/g, (match, tag, attrs, close) => {
         const cm = attrs.match(/\bclass="([^"]*)"/);
         if (!cm) return match;
         const classes = cm[1].split(/\s+/);
-        if (!classes.some(c => blendClasses.has(c))) return match;
-        const elOp = attrs.match(/\bopacity="([\d.]+)"/);
-        let opacity = elOp ? parseFloat(elOp[1]) : null;
-        if (opacity === null) {
-          for (const cls of classes) {
-            if (classProps[cls]?.opacity != null) { opacity = classProps[cls].opacity; break; }
-          }
-        }
-        opacity = opacity ?? 0.25;
-        let newAttrs = attrs.replace(/\bfill="[^"]*"\s*/g, '').replace(/\bopacity="[^"]*"\s*/g, '');
-        return `<${tag}${newAttrs} fill="rgba(0,0,0,${opacity})"${close}`;
+        const blendCls = classes.find(c => blendClasses.has(c));
+        if (!blendCls) return match;
+        const gradId  = classProps[blendCls]?.gradientId;
+        const overlay = gradId ? overlayMap[gradId] : null;
+        const newFill = overlay ? `url(#${overlay.newId})` : 'none';
+        let newAttrs = attrs.replace(/\bfill="[^"]*"\s*/g,'').replace(/\bopacity="[^"]*"\s*/g,'');
+        return `<${tag}${newAttrs} fill="${newFill}"${close}`;
       });
-      fixes.push(`Converted ${blendClasses.size} mix-blend-mode overlay class(es) → solid rgba(0,0,0,opacity) (resvg fallback)`);
+      fixes.push(`Converted ${blendClasses.size} mix-blend-mode overlay class(es) → equivalent SVG gradients (resvg fallback)`);
     }
   }
 
@@ -1541,7 +1606,7 @@ function buildFieldMapper(svgString) {
       : (el.textContent || '').trim().substring(0, 40) || '(empty)';
     const existingId = el.getAttribute('id') || '';
     const suggestedId = existingId && !AUTO_ID.test(existingId) ? existingId : '';
-    mapperElements.push({ index: i, tag, isImage, textContent, suggestedId, fieldType: isImage ? 'image' : 'text', anchor: 'left' });
+    mapperElements.push({ index: i, tag, isImage, textContent, suggestedId, fieldType: isImage ? 'image' : 'text', anchor: 'center' });
   });
 
   document.getElementById('mapperList').innerHTML = mapperElements.map((el, i) => `

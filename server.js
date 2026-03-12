@@ -256,10 +256,72 @@ async function fetchAsDataUri(url, timeoutMs = 15000) {
   }
 }
 
+/**
+ * Normalize Harmonia Sans Pro Cyr font references throughout the SVG.
+ *
+ * Illustrator exports PostScript names as font-family values:
+ *   font-family: HarmoniaSansProCyr-Regular   → family + weight:400
+ *   font-family: HarmoniaSansProCyr-SemiBd    → family + weight:600
+ *   font-family: HarmoniaSansProCyr-Bold       → family + weight:700
+ *
+ * resvg (via fontdb) matches by family name + weight, NOT by PostScript name.
+ * Without this fix, all weights fall back to the first loaded font (Regular).
+ *
+ * Strategy:
+ *   1. In every CSS rule that sets font-family to a Harmonia PostScript name,
+ *      replace it with the canonical family name AND inject font-weight.
+ *   2. Also handle font-family set as an attribute on <text>/<tspan> elements.
+ *   3. Inject a global fallback so any unspecified elements use the family.
+ */
 function injectGlobalFontCss(svg) {
-  const css = `<style>svg { font-family: "Harmonia Sans Pro Cyr", "HarmoniaSansProCyr", sans-serif; }</style>`;
-  if (/<style[\s>]/m.test(svg)) return svg;
-  return svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${css}\n`);
+  // Map PostScript name → { family, weight }
+  const HARMONIA_MAP = {
+    'HarmoniaSansProCyr-Regular':  { family: 'Harmonia Sans Pro Cyr', weight: 400 },
+    'HarmoniaSansProCyr-SemiBd':   { family: 'Harmonia Sans Pro Cyr', weight: 600 },
+    'HarmoniaSansProCyr-Bold':     { family: 'Harmonia Sans Pro Cyr', weight: 700 },
+    // Variants without the full suffix
+    'HarmoniaSansPro-Regular':     { family: 'Harmonia Sans Pro Cyr', weight: 400 },
+    'HarmoniaSansPro-SemiBd':      { family: 'Harmonia Sans Pro Cyr', weight: 600 },
+    'HarmoniaSansPro-Bold':        { family: 'Harmonia Sans Pro Cyr', weight: 700 },
+  };
+  const PS_NAMES = Object.keys(HARMONIA_MAP);
+  const PS_PATTERN = PS_NAMES.map(n => n.replace(/-/g, '[-\\s]?')).join('|');
+  const PS_RE = new RegExp(`(${PS_PATTERN})`, 'g');
+
+  // 1. Rewrite CSS font-family declarations inside <style> blocks
+  svg = svg.replace(/<style([^>]*)>([\s\S]*?)<\/style>/gi, (_, attrs, body) => {
+    // Process rule by rule to inject font-weight alongside font-family replacement
+    const cleaned = body.replace(
+      /([^{}]+)\{([^}]*)\}/g,
+      (rule, selectors, props) => {
+        // Check if this rule sets a Harmonia PostScript font-family
+        const ffMatch = props.match(/font-family\s*:\s*([^;,}\n]+)/i);
+        if (!ffMatch) return rule;
+        const rawFf = ffMatch[1].trim().replace(/['"]/g, '');
+        const entry = HARMONIA_MAP[rawFf] || HARMONIA_MAP[PS_NAMES.find(n => rawFf.replace(/[-\s]/g,'').toLowerCase() === n.replace(/-/g,'').toLowerCase())];
+        if (!entry) return rule;
+
+        // Replace font-family, inject font-weight (remove existing font-weight first)
+        let newProps = props
+          .replace(/\bfont-weight\s*:[^;}\n]+[;]?/gi, '')
+          .replace(/font-family\s*:[^;}\n]+/gi,
+            `font-family: '${entry.family}'; font-weight: ${entry.weight}`);
+        return `${selectors}{${newProps}}`;
+      }
+    );
+    return `<style${attrs}>${cleaned}</style>`;
+  });
+
+  // 2. Global fallback: ensure all text defaults to the family
+  const fallbackCss = `<style>svg { font-family: 'Harmonia Sans Pro Cyr', sans-serif; font-weight: 400; }</style>`;
+  if (!/<style[\s>]/m.test(svg)) {
+    svg = svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${fallbackCss}\n`);
+  } else {
+    // Prepend fallback before existing <style>
+    svg = svg.replace(/(<svg\b[^>]*>)([\s\S]*?)(<style[\s>])/m, `$1$2${fallbackCss}$3`);
+  }
+
+  return svg;
 }
 
 /**
@@ -294,84 +356,114 @@ function injectTextAnchor(svg) {
 // ---- Core render logic ----
 // Shared by both POST /render and POST /render/:template
 /**
- * resvg does not support mix-blend-mode. Illustrator templates use multiply-blend gradient
- * overlays to darken photos (vignettes, text-area backing). Without blend mode support,
- * gradient fills render as raw white-to-black bands creating visible artifacts.
+ * resvg does not support mix-blend-mode. Illustrator uses multiply-blend gradients to
+ * darken photos — white→black linear with multiply = transparent→dark with normal blend.
  *
- * Fix:
- *  1. Find all CSS classes that declare mix-blend-mode.
- *  2. For each such class: read its opacity value (default 1).
- *  3. Replace any gradient fill (url(#...)) on that class with fill="none" in CSS.
- *  4. On actual SVG elements using those classes: inject fill="rgba(0,0,0,{opacity})"
- *     directly as an attribute and remove the opacity attribute (baked into rgba).
- *     → This approximates the multiply-darken intent without needing blend mode support.
- *  5. Strip mix-blend-mode from the CSS rules.
+ * Fix: for each blend-mode overlay class, replace the gradient fill with a new
+ * equivalent SVG gradient (no blend mode needed):
+ *   - Linear gradient (white→black + multiply) → linearGradient transparent→rgba(0,0,0,op)
+ *   - Radial gradient (black→white + multiply) → radialGradient rgba(0,0,0,op)→transparent
+ * Both use gradientUnits="objectBoundingBox" so the shape/rotation of the element is preserved.
+ * The opacity attribute is removed from each element (baked into the gradient stop colors).
  */
 function stripMixBlendMode(svg) {
   const styleMatch = svg.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
   if (!styleMatch) return svg;
   const cssText = styleMatch[1];
 
-  // Build map: className → { hasBlend, opacity, hasFill }
-  // First pass: collect per-class properties
+  // Build map: className → { hasBlend, opacity, gradientId }
   const classProps = {};
   for (const [, selectors, body] of cssText.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
     const hasBlend = /mix-blend-mode/i.test(body);
-    const opacityMatch = body.match(/(?:^|;)\s*opacity\s*:\s*([\d.]+)/);
-    const hasFill = /\bfill\s*:\s*url\(/i.test(body);
+    const opacityM = body.match(/(?:^|;|\s)opacity\s*:\s*([\d.]+)/);
+    const fillM    = body.match(/\bfill\s*:\s*url\(#([\w-]+)\)/i);
     for (const [, cls] of selectors.matchAll(/\.([\w-]+)/g)) {
-      if (!classProps[cls]) classProps[cls] = { hasBlend: false, opacity: null, hasFill: false };
+      if (!classProps[cls]) classProps[cls] = { hasBlend: false, opacity: null, gradientId: null };
       if (hasBlend) classProps[cls].hasBlend = true;
-      if (opacityMatch) classProps[cls].opacity = parseFloat(opacityMatch[1]);
-      if (hasFill) classProps[cls].hasFill = true;
+      if (opacityM) classProps[cls].opacity = parseFloat(opacityM[1]);
+      if (fillM)    classProps[cls].gradientId = fillM[1];
     }
   }
 
   const blendClasses = new Set(Object.entries(classProps).filter(([,v]) => v.hasBlend).map(([k]) => k));
   if (blendClasses.size === 0) return svg;
 
-  // Strip mix-blend-mode and gradient fills from CSS
-  let fixed = svg.replace(/<style([^>]*)>([\s\S]*?)<\/style>/gi, (_, attrs, body) => {
+  // Determine gradient type (linear vs radial) for each blend class by inspecting <defs>
+  const defsMatch = svg.match(/<defs[^>]*>([\s\S]*?)<\/defs>/i);
+  const defsText = defsMatch ? defsMatch[1] : '';
+
+  let overlayCounter = 0;
+  // Map: original gradientId → new faris-overlay-N id
+  const overlayMap = {}; // gradientId → { newId, isRadial, opacity }
+
+  for (const cls of blendClasses) {
+    const { gradientId, opacity } = classProps[cls];
+    if (!gradientId) continue;
+    if (overlayMap[gradientId]) continue; // already mapped
+
+    const isRadial = new RegExp(`<radialGradient[^>]*\\bid="${gradientId}"`, 'i').test(defsText);
+    const op = opacity ?? 0.25;
+    const newId = `faris-overlay-${++overlayCounter}`;
+    overlayMap[gradientId] = { newId, isRadial, opacity: op };
+  }
+
+  // Inject new overlay gradients into <defs>
+  if (Object.keys(overlayMap).length > 0) {
+    const newGradients = Object.values(overlayMap).map(({ newId, isRadial, opacity }) => {
+      if (isRadial) {
+        // Radial: dark center → transparent edge (replaces black→white + multiply)
+        return `<radialGradient id="${newId}" cx="0.5" cy="0.5" r="0.5" gradientUnits="objectBoundingBox">` +
+          `<stop offset="0" stop-color="black" stop-opacity="${opacity}"/>` +
+          `<stop offset="1" stop-color="black" stop-opacity="0"/>` +
+          `</radialGradient>`;
+      } else {
+        // Linear: transparent top → dark bottom (replaces white→black + multiply)
+        return `<linearGradient id="${newId}" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">` +
+          `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
+          `<stop offset="1" stop-color="black" stop-opacity="${opacity}"/>` +
+          `</linearGradient>`;
+      }
+    }).join('\n');
+    svg = svg.replace(/(<defs[^>]*>)/, `$1\n${newGradients}`);
+  }
+
+  // Strip mix-blend-mode and gradient fills from CSS, also strip opacity for pure-blend rules
+  svg = svg.replace(/<style([^>]*)>([\s\S]*?)<\/style>/gi, (_, attrs, body) => {
     let cleaned = body.replace(/\s*mix-blend-mode\s*:[^;}\n]+[;]?/gi, '');
-    // Remove gradient fill references from blend classes
+    // Remove gradient fill and opacity ONLY from rules whose selectors are ALL blend classes
     cleaned = cleaned.replace(/([^{}]+)\{([^}]*)\}/g, (rule, selectors, props) => {
-      const cls = [...selectors.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
-      if (!cls.some(c => blendClasses.has(c))) return rule;
-      return rule.replace(/\bfill\s*:\s*url\([^)]*\)\s*;?/gi, '');
+      const ruleCls = [...selectors.matchAll(/\.([\w-]+)/g)].map(m => m[1]);
+      if (ruleCls.length === 0) return rule;
+      const allBlend = ruleCls.every(c => blendClasses.has(c));
+      if (!allBlend) return rule; // mixed rule (e.g. .st2, .st8) — leave opacity intact
+      let newProps = props
+        .replace(/\bfill\s*:\s*url\([^)]*\)\s*;?/gi, '')
+        .replace(/\bopacity\s*:[^;}\n]+[;]?/gi, '');
+      return `${selectors}{${newProps}}`;
     });
     return `<style${attrs}>${cleaned}</style>`;
   });
 
-  // Replace elements: inject fill=rgba(0,0,0,opacity) directly, remove opacity attr
-  fixed = fixed.replace(/<(rect|path|circle|ellipse|polygon|polyline)\b([^>]*?)(\/>|>)/g, (match, tag, attrs, close) => {
+  // Update elements: replace gradient fill attr with new overlay gradient, remove opacity attr
+  svg = svg.replace(/<(rect|path|circle|ellipse|polygon|polyline)\b([^>]*?)(\/>|>)/g, (match, tag, attrs, close) => {
     const classMatch = attrs.match(/\bclass="([^"]*)"/);
     if (!classMatch) return match;
     const classes = classMatch[1].split(/\s+/);
-    if (!classes.some(c => blendClasses.has(c))) return match;
+    const blendCls = classes.find(c => blendClasses.has(c));
+    if (!blendCls) return match;
 
-    // Find opacity: element attribute first, then CSS class
-    const elOpacityMatch = attrs.match(/\bopacity="([\d.]+)"/);
-    let opacity = elOpacityMatch ? parseFloat(elOpacityMatch[1]) : null;
-    if (opacity === null) {
-      for (const cls of classes) {
-        if (classProps[cls]?.opacity !== null && classProps[cls]?.opacity !== undefined) {
-          opacity = classProps[cls].opacity; break;
-        }
-      }
-    }
-    opacity = opacity ?? 0.25; // sensible default
+    const gradId = classProps[blendCls]?.gradientId;
+    const overlay = gradId ? overlayMap[gradId] : null;
+    const newFill = overlay ? `url(#${overlay.newId})` : 'none';
 
-    const solidFill = `rgba(0,0,0,${opacity})`;
-
-    // Remove existing fill and opacity attrs, then inject solid fill
     let newAttrs = attrs
       .replace(/\bfill="[^"]*"\s*/g, '')
       .replace(/\bopacity="[^"]*"\s*/g, '');
-    newAttrs = newAttrs + ` fill="${solidFill}"`;
+    newAttrs = newAttrs + ` fill="${newFill}"`;
     return `<${tag}${newAttrs}${close}`;
   });
 
-  return fixed;
+  return svg;
 }
 
 function fixSingleArgTranslate(svg) {
