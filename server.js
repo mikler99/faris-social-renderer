@@ -131,10 +131,13 @@ function replaceTextById(svg, id, newText, opts = {}) {
 
     // Preserve tspan structure: if there is a tspan child, only replace its
     // text content so its x/y positioning attributes are kept intact.
+    // IMPORTANT: use a replacer function, never a replacement string — safeText
+    // may contain '$' (e.g. "$1.2M") which String.replace() treats as a
+    // backreference pattern, corrupting the XML output.
     if (/<tspan[\s>]/i.test(innerContent)) {
       const newInner = innerContent.replace(
         /(<tspan[^>]*>)[^<]*(<\/tspan>)/,
-        `$1${safeText}$2`
+        (_, open, close) => `${open}${safeText}${close}`
       );
       return `<${tag}${updatedAttrs}>${newInner}</${tag}>`;
     }
