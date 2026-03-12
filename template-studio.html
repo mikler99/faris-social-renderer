@@ -749,6 +749,7 @@
   }
   .mapper-type-btn.active-text { background:var(--surface3); color:var(--ink); border-color:var(--ink2); }
   .mapper-type-btn.active-image { background:var(--accent-light); color:var(--accent); border-color:var(--accent-border); }
+  .mapper-type-btn.active-center { background: rgba(240,180,41,0.12); color:var(--yellow); border-color:rgba(240,180,41,0.35); }
   .field-mapper-footer { padding:12px 20px; border-top:1px solid var(--border); }
   .mapper-skip {
     font-family:var(--mono); font-size:10px; color:var(--ink2); text-align:center;
@@ -1323,6 +1324,39 @@ function sanitizeSvg(svgString) {
   });
   if (imageFixed) fixes.push(`Stripped ${imageFixed} embedded base64 image(s) → cleared href for injection`);
 
+  // 5.7. Detect center-aligned text and bake text-anchor="middle" onto <text> elements.
+  // Illustrator exports center-aligned text with translate(cx cy) positioning but no text-anchor attribute.
+  // Without text-anchor="middle", resvg left-aligns from the translate point — text appears off to the right.
+  // We detect this two ways:
+  //   a) A CSS class used on <text> contains "text-align:center" or "text-anchor:middle"
+  //   b) The <text> element itself has style/attribute text-anchor or text-align:center
+  // Then we set text-anchor="middle" on the element so resvg renders it correctly.
+  const styleEl = doc.querySelector('style');
+  const cssText = styleEl ? styleEl.textContent : '';
+
+  // Parse class rules that contain center alignment
+  const centerClasses = new Set();
+  const classRules = cssText.matchAll(/\.([\w-]+)\s*\{([^}]*)\}/g);
+  for (const [, cls, body] of classRules) {
+    if (/text-align\s*:\s*center/i.test(body) || /text-anchor\s*:\s*middle/i.test(body)) {
+      centerClasses.add(cls);
+    }
+  }
+
+  let anchorFixed = 0;
+  doc.querySelectorAll('text').forEach(el => {
+    // Already has text-anchor set — skip
+    if (el.getAttribute('text-anchor') || (el.getAttribute('style') || '').includes('text-anchor')) return;
+    // Check if any class on this element is a center class
+    const classes = (el.getAttribute('class') || '').split(/\s+/);
+    const hasCenter = classes.some(c => centerClasses.has(c));
+    if (hasCenter) {
+      el.setAttribute('text-anchor', 'middle');
+      anchorFixed++;
+    }
+  });
+  if (anchorFixed) fixes.push(`Added text-anchor="middle" to ${anchorFixed} center-aligned text element(s)`);
+
   // 6. Deduplicate elements — remove Inkscape copy-paste artifacts.
   // Pattern: Inkscape appends -N or -N-M suffixes when duplicating (e.g. address_line_2-1, text2-5-2).
   // Rule: for each base ID (strip trailing -digits), keep only the FIRST occurrence, remove the rest.
@@ -1426,7 +1460,7 @@ function buildFieldMapper(svgString) {
       : (el.textContent || '').trim().substring(0, 40) || '(empty)';
     const existingId = el.getAttribute('id') || '';
     const suggestedId = existingId && !AUTO_ID.test(existingId) ? existingId : '';
-    mapperElements.push({ index: i, tag, isImage, textContent, suggestedId, fieldType: isImage ? 'image' : 'text' });
+    mapperElements.push({ index: i, tag, isImage, textContent, suggestedId, fieldType: isImage ? 'image' : 'text', anchor: 'left' });
   });
 
   document.getElementById('mapperList').innerHTML = mapperElements.map((el, i) => `
@@ -1446,6 +1480,7 @@ function buildFieldMapper(svgString) {
       <div class="mapper-type-row">
         <button class="mapper-type-btn${el.fieldType==='text'?' active-text':''}" id="mtt-${i}" onclick="setMapperType(${i},'text')">◻ text</button>
         <button class="mapper-type-btn${el.fieldType==='image'?' active-image':''}" id="mti-${i}" onclick="setMapperType(${i},'image')">⬛ image</button>
+        ${!el.isImage ? `<button class="mapper-type-btn" id="mta-${i}" onclick="setMapperAnchor(${i})" title="Toggle text alignment">⇔ left</button>` : ''}
       </div>
     </div>
   `).join('');
@@ -1464,6 +1499,16 @@ function setMapperType(index, type) {
   document.getElementById(`mti-${index}`).className = `mapper-type-btn${type==='image'?' active-image':''}`;
 }
 
+function setMapperAnchor(index) {
+  const cycle = { left: 'center', center: 'right', right: 'left' };
+  const labels = { left: '⇐ left', center: '⇔ center', right: '⇒ right' };
+  const next = cycle[mapperElements[index].anchor || 'left'];
+  mapperElements[index].anchor = next;
+  const btn = document.getElementById(`mta-${index}`);
+  btn.textContent = labels[next];
+  btn.className = `mapper-type-btn${next === 'center' ? ' active-center' : ''}`;
+}
+
 function applyFieldMap() {
   const doc = new DOMParser().parseFromString(svgContent, 'image/svg+xml');
   const allTextImage = [...doc.querySelectorAll('text, image')];
@@ -1475,6 +1520,13 @@ function applyFieldMap() {
     const el = allTextImage[meta.index];
     if (!el) return;
     el.setAttribute('id', fieldName);
+    // Bake text-anchor for text elements
+    if (!meta.isImage && meta.anchor && meta.anchor !== 'left') {
+      const anchorMap = { center: 'middle', right: 'end' };
+      el.setAttribute('text-anchor', anchorMap[meta.anchor]);
+      // Also set on any tspan children
+      el.querySelectorAll('tspan').forEach(ts => ts.setAttribute('text-anchor', anchorMap[meta.anchor]));
+    }
     patched++;
   });
 

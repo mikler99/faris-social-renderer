@@ -203,15 +203,29 @@ function replaceImageHref(svg, id, dataUriOrUrl) {
 }
 
 function guessMimeFromUrl(url) {
-  const u = String(url).toLowerCase();
-  if (u.endsWith(".png")) return "image/png";
+  const u = String(url).toLowerCase().split("?")[0]; // strip query params
+  if (u.endsWith(".png"))              return "image/png";
   if (u.endsWith(".jpg") || u.endsWith(".jpeg")) return "image/jpeg";
-  if (u.endsWith(".webp")) return "image/webp";
-  if (u.endsWith(".gif")) return "image/gif";
-  return "application/octet-stream";
+  if (u.endsWith(".webp"))             return "image/webp";
+  if (u.endsWith(".gif"))              return "image/gif";
+  return null; // unknown — will fall back to byte sniffing
 }
 
-async function fetchAsDataUri(url, timeoutMs = 7000) {
+function sniffMimeFromBytes(buf) {
+  const b = new Uint8Array(buf.slice(0, 12));
+  // JPEG: FF D8 FF
+  if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return "image/jpeg";
+  // PNG: 89 50 4E 47
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return "image/png";
+  // GIF: 47 49 46
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif";
+  // WebP: 52 49 46 46 .. .. .. .. 57 45 42 50
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+      b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return "image/webp";
+  return "image/jpeg"; // safe default for photo CDNs
+}
+
+async function fetchAsDataUri(url, timeoutMs = 15000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -226,11 +240,15 @@ async function fetchAsDataUri(url, timeoutMs = 7000) {
       throw new Error(`Image fetch failed: ${resp.status} ${resp.statusText}`);
     }
 
+    const arrayBuf = await resp.arrayBuffer();
+
+    // MIME priority: Content-Type header → extension on final URL → extension on original URL → byte sniff
     const contentType =
       resp.headers.get("content-type")?.split(";")[0]?.trim() ||
-      guessMimeFromUrl(url);
+      guessMimeFromUrl(resp.url) ||   // final URL after redirects (e.g. dl.boxcloud.com/...jpg)
+      guessMimeFromUrl(url)       ||  // original URL
+      sniffMimeFromBytes(arrayBuf);   // byte-level fallback (handles Box /download URLs)
 
-    const arrayBuf = await resp.arrayBuffer();
     const b64 = Buffer.from(arrayBuf).toString("base64");
     return `data:${contentType};base64,${b64}`;
   } finally {
@@ -244,10 +262,40 @@ function injectGlobalFontCss(svg) {
   return svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${css}\n`);
 }
 
+/**
+ * Detect CSS classes with text-align:center and bake text-anchor="middle" onto matching <text> elements.
+ * Illustrator exports center-aligned text with translate(cx,cy) but no text-anchor — resvg left-aligns it.
+ */
+function injectTextAnchor(svg) {
+  // Extract <style> content
+  const styleMatch = svg.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+  const cssText = styleMatch ? styleMatch[1] : '';
+
+  // Find class names that declare center alignment
+  const centerClasses = new Set();
+  for (const [, cls, body] of cssText.matchAll(/\.([\w-]+)\s*\{([^}]*)\}/g)) {
+    if (/text-align\s*:\s*center/i.test(body) || /text-anchor\s*:\s*middle/i.test(body)) {
+      centerClasses.add(cls);
+    }
+  }
+  if (centerClasses.size === 0) return svg;
+
+  // For each <text> element that uses a center class, add text-anchor="middle" if missing
+  return svg.replace(/<text\b([^>]*)>/g, (match, attrs) => {
+    if (/text-anchor/.test(attrs)) return match; // already set
+    const classMatch = attrs.match(/\bclass="([^"]*)"/);
+    if (!classMatch) return match;
+    const classes = classMatch[1].split(/\s+/);
+    if (!classes.some(c => centerClasses.has(c))) return match;
+    return `<text${attrs} text-anchor="middle">`;
+  });
+}
+
 // ---- Core render logic ----
 // Shared by both POST /render and POST /render/:template
 async function renderSvgToPng(svg, fields) {
   svg = injectGlobalFontCss(svg);
+  svg = injectTextAnchor(svg);
 
   const svgImageIds = detectImageIds(svg);
   const svgAllIds = detectIds(svg);
