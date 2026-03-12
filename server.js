@@ -152,14 +152,24 @@ function replaceImageHref(svg, id, dataUriOrUrl) {
   const href = String(dataUriOrUrl);
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // 1. Standard <image id="ID" href="..."> elements
+  // 1. id before href:  <image id="ID" ... href="...">
   svg = svg.replace(
     new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*\\bhref=")[^"]*(")`  , "m"),
     `$1${href}$2`
   );
-  // 2. Standard <image id="ID" xlink:href="..."> (Illustrator / older SVG)
+  // 2. id before xlink:href:  <image id="ID" ... xlink:href="...">
   svg = svg.replace(
     new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*\\bxlink:href=")[^"]*(")`  , "m"),
+    `$1${href}$2`
+  );
+  // 3. href before id:  <image href="..." ... id="ID">  (Illustrator attr order)
+  svg = svg.replace(
+    new RegExp(`(<image\\b[^>]*\\bhref=")[^"]*("[^>]*\\bid="${escapedId}"[^>]*/?>)`, "m"),
+    `$1${href}$2`
+  );
+  // 4. xlink:href before id:  <image xlink:href="..." ... id="ID">  (Illustrator with embedded blob)
+  svg = svg.replace(
+    new RegExp(`(<image\\b[^>]*\\bxlink:href=")[^"]*("[^>]*\\bid="${escapedId}"[^>]*/?>)`, "m"),
     `$1${href}$2`
   );
 
