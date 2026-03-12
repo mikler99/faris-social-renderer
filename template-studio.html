@@ -1501,11 +1501,8 @@ function sanitizeSvg(svgString) {
   if (singleTranslateFixed) fixes.push(`Expanded ${singleTranslateFixed} single-arg translate(x) → translate(x, 0) for resvg compatibility`);
 
   // 5.10. Replace mix-blend-mode gradient overlays with equivalent non-blend SVG gradients.
-  // resvg does not support mix-blend-mode. Illustrator uses multiply-blend gradients:
-  //   white→black linear + multiply  ≡  transparent→dark linear  (normal blend, same result)
-  //   black→white radial + multiply  ≡  dark→transparent radial  (normal blend, same result)
-  // We inject new faris-overlay-N gradients into <defs> and point the blend elements at them.
-  // This preserves the gradient fade shape while eliminating all artifacts.
+  // Uses userSpaceOnUse with element geometry so gradients start transparent at the
+  // canvas edge, not at the rect's off-canvas origin — fixes the 'box' artifact.
   {
     const classProps = {};
     for (const [, selectors, body] of out.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
@@ -1523,20 +1520,21 @@ function sanitizeSvg(svgString) {
     if (blendClasses.size > 0) {
       const defsM = out.match(/<defs[^>]*>([\s\S]*?)<\/defs>/i);
       const defsText = defsM ? defsM[1] : '';
-      let overlayCounter = 0;
-      const overlayMap = {};
+
+      // Get canvas height from viewBox
+      const vbM = out.match(/viewBox="([^"]*)"/i);
+      const vbVals = vbM ? vbM[1].trim().split(/[\s,]+/).map(Number) : [0,0,1080,1350];
+      const canvasH = vbVals[3] || 1350;
+
+      // Build per-gradientId metadata (isRadial, opacity)
+      const gradMeta = {};
       for (const cls of blendClasses) {
         const { gradientId, opacity } = classProps[cls];
-        if (!gradientId || overlayMap[gradientId]) continue;
+        if (!gradientId || gradMeta[gradientId]) continue;
         const isRadial = new RegExp(`<radialGradient[^>]*\\bid="${gradientId}"`,'i').test(defsText);
-        overlayMap[gradientId] = { newId: `faris-overlay-${++overlayCounter}`, isRadial, opacity: opacity ?? 0.25 };
+        gradMeta[gradientId] = { isRadial, opacity: opacity ?? 0.25 };
       }
-      const newGrads = Object.values(overlayMap).map(({ newId, isRadial, opacity }) =>
-        isRadial
-          ? `<radialGradient id="${newId}" cx="0.5" cy="0.5" r="0.5" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="black" stop-opacity="${opacity}"/><stop offset="1" stop-color="black" stop-opacity="0"/></radialGradient>`
-          : `<linearGradient id="${newId}" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="black" stop-opacity="0"/><stop offset="1" stop-color="black" stop-opacity="${opacity}"/></linearGradient>`
-      ).join('\n');
-      if (newGrads) out = out.replace(/(<defs[^>]*>)/, `$1\n${newGrads}`);
+
       // Strip mix-blend-mode and gradient fill/opacity from pure-blend-only CSS rules
       out = out.replace(/(<style[^>]*>)([\s\S]*?)(<\/style>)/gi, (_, open, body, close) => {
         let cleaned = body.replace(/\s*mix-blend-mode\s*:[^;}\n]+[;]?/gi, '');
@@ -1550,19 +1548,53 @@ function sanitizeSvg(svgString) {
         });
         return open + cleaned + close;
       });
-      // Update element fill attr → new overlay gradient, remove opacity attr
+
+      // Per-element gradient injection with userSpaceOnUse for correct canvas-relative positioning
+      let overlayCounter = 0;
+      const elemGradMap = {}; // key → newId
+      const newGradDefs = [];
+
       out = out.replace(/<(rect|path|circle|ellipse|polygon|polyline)\b([^>]*?)(\/>|>)/g, (match, tag, attrs, close) => {
         const cm = attrs.match(/\bclass="([^"]*)"/);
         if (!cm) return match;
         const classes = cm[1].split(/\s+/);
         const blendCls = classes.find(c => blendClasses.has(c));
         if (!blendCls) return match;
-        const gradId  = classProps[blendCls]?.gradientId;
-        const overlay = gradId ? overlayMap[gradId] : null;
-        const newFill = overlay ? `url(#${overlay.newId})` : 'none';
+
+        const gradId = classProps[blendCls]?.gradientId;
+        const meta   = gradId ? gradMeta[gradId] : null;
+        let newFill;
+
+        if (meta && tag === 'rect') {
+          const rx = parseFloat(attrs.match(/\bx="([^"]*)"/)?.[1] ?? '0');
+          const ry = parseFloat(attrs.match(/\by="([^"]*)"/)?.[1] ?? '0');
+          const rw = parseFloat(attrs.match(/\bwidth="([^"]*)"/)?.[1] ?? '0');
+          const rh = parseFloat(attrs.match(/\bheight="([^"]*)"/)?.[1] ?? '0');
+          const elemKey = `${gradId}:${rx}:${ry}:${rw}:${rh}`;
+          if (!elemGradMap[elemKey]) {
+            const elemId = `faris-elem-${++overlayCounter}`;
+            elemGradMap[elemKey] = elemId;
+            if (meta.isRadial) {
+              const cx = rx + rw / 2, cy = ry + rh / 2, r = Math.max(rw, rh) / 2;
+              newGradDefs.push(`<radialGradient id="${elemId}" cx="${cx}" cy="${cy}" r="${r}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="black" stop-opacity="${meta.opacity}"/><stop offset="1" stop-color="black" stop-opacity="0"/></radialGradient>`);
+            } else {
+              const gradY1 = Math.max(ry, 0);
+              const gradY2 = Math.min(ry + rh, canvasH);
+              newGradDefs.push(`<linearGradient id="${elemId}" x1="0" y1="${gradY1}" x2="0" y2="${gradY2}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="black" stop-opacity="0"/><stop offset="1" stop-color="black" stop-opacity="${meta.opacity}"/></linearGradient>`);
+            }
+          }
+          newFill = `url(#${elemGradMap[elemKey]})`;
+        } else {
+          newFill = 'none';
+        }
+
         let newAttrs = attrs.replace(/\bfill="[^"]*"\s*/g,'').replace(/\bopacity="[^"]*"\s*/g,'');
         return `<${tag}${newAttrs} fill="${newFill}"${close}`;
       });
+
+      if (newGradDefs.length > 0) {
+        out = out.replace(/(<defs[^>]*>)/, `$1\n${newGradDefs.join('\n')}`);
+      }
       fixes.push(`Converted ${blendClasses.size} mix-blend-mode overlay class(es) → equivalent SVG gradients (resvg fallback)`);
     }
   }
