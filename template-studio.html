@@ -1360,12 +1360,23 @@ function sanitizeSvg(svgString) {
   // 6. Deduplicate elements — remove Inkscape copy-paste artifacts.
   // Pattern: Inkscape appends -N or -N-M suffixes when duplicating (e.g. address_line_2-1, text2-5-2).
   // Rule: for each base ID (strip trailing -digits), keep only the FIRST occurrence, remove the rest.
+  //
+  // IMPORTANT GUARDS:
+  // a) Never touch elements inside <defs> — those are gradient/clipPath/etc. definitions
+  //    referenced by ID. Their IDs like "clippath-1", "linear-gradient1" are real names.
+  // b) Only treat an ID as a duplicate if its base (sans suffix) already exists as a
+  //    non-defs element — avoids false positives on Illustrator-style names.
   const seenBaseIds = new Map(); // baseId → first element seen
   const toRemove = [];
 
+  // Collect all elements with IDs that are NOT inside <defs>
   doc.querySelectorAll('[id]').forEach(el => {
+    // Skip anything inside <defs> — these are SVG definitions, not content duplicates
+    if (el.closest('defs')) return;
+
     const id = el.getAttribute('id');
     // Extract base ID: strip trailing -digits patterns (e.g. "foo-1", "foo-1-3", "foo-5-2")
+    // Must be hyphen-separated digits to count: "linear-gradient1" does NOT match (no hyphen before digit)
     const baseId = id.replace(/(-\d+)+$/, '');
     if (baseId === id) {
       // No suffix — this IS the canonical element, just register it
@@ -1382,6 +1393,8 @@ function sanitizeSvg(svgString) {
         seenBaseIds.set(baseId, el);
         // Also fix any tspan children that have the same suffix pattern
         el.querySelectorAll('[id]').forEach(child => {
+          // Skip defs children just in case
+          if (child.closest('defs')) return;
           const cid = child.getAttribute('id');
           const cbase = cid.replace(/(-\d+)+$/, '');
           if (cbase !== cid) child.setAttribute('id', cbase);
@@ -1393,14 +1406,17 @@ function sanitizeSvg(svgString) {
   // Remove duplicate elements (walk up to remove whole group if parent is also a dup)
   toRemove.forEach(el => {
     // Remove the element or its closest non-svg ancestor group that only contains this element
+    // Never walk into or past <defs>
     let target = el;
     while (target.parentElement &&
            target.parentElement.tagName.toLowerCase() !== 'svg' &&
-           target.parentElement.tagName.toLowerCase() !== 'g' ||
+           target.parentElement.tagName.toLowerCase() !== 'g' &&
+           target.parentElement.tagName.toLowerCase() !== 'defs' ||
            (target.parentElement && target.parentElement.children.length === 1 &&
             target.parentElement.tagName.toLowerCase() === 'g')) {
       target = target.parentElement;
-      if (target.tagName.toLowerCase() === 'svg') { target = el; break; }
+      const tag = target.tagName.toLowerCase();
+      if (tag === 'svg' || tag === 'defs') { target = el; break; }
     }
     if (target.parentNode) target.parentNode.removeChild(target);
   });
