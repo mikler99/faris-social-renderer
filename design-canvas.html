@@ -266,6 +266,9 @@ let drawing=false, drawEl=null, drawSt={x:0,y:0};
 let polyPts=[],polyOn=false;
 let dragOn=false, elSt0={};
 let editEl=null;
+// ── SNAP ──
+const SNAP_THRESH = 10; // SVG units
+let snapLines = {x:[], y:[]}; // active snap lines for display
 
 // ── UNDO ──
 function snap(){undoSt.push(svg.innerHTML);if(undoSt.length>80)undoSt.shift();redoSt=[];uUI();}
@@ -281,13 +284,83 @@ function zFit(){const a=document.getElementById('canvas-area');setZ(Math.min((a.
 // ── COORDS ──
 function svgPt(e){const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left)/Z,y:(e.clientY-r.top)/Z};}
 
-// ── SELECTION BOX — pixel-perfect via getBoundingClientRect ──
+
+// ── SNAP HELPERS ──
+// Guide lines: thirds, halves of canvas + edges of all other elements
+function getSnapGuides(movingEl) {
+  const gx = [0, cW*1/3, cW/2, cW*2/3, cW]; // vertical guides (x positions)
+  const gy = [0, cH*1/3, cH/2, cH*2/3, cH]; // horizontal guides (y positions)
+  // Add bbox edges+centers of all other elements
+  [...svg.children].forEach(el => {
+    if(el===movingEl||el.id==='__bg__'||el.id==='__tp__')return;
+    try{
+      const b=el.getBBox();
+      gx.push(b.x, b.x+b.width/2, b.x+b.width);
+      gy.push(b.y, b.y+b.height/2, b.y+b.height);
+    }catch(e){}
+  });
+  return {gx, gy};
+}
+
+function snapVal(v, guides, thresh) {
+  let best=null, bestD=thresh;
+  for(const g of guides){const d=Math.abs(v-g);if(d<bestD){bestD=d;best=g;}}
+  return best!==null ? {snapped:best, delta:best-v} : {snapped:v, delta:0};
+}
+
+// Snap a bounding box position; returns adjusted dx/dy and active snap line coords
+function snapMove(el, dx, dy, origSt) {
+  let b;try{b=el.getBBox();}catch(e){return{dx,dy,lx:[],ly:[]};}
+  const {gx,gy} = getSnapGuides(el);
+  // Current position after move
+  const bx = origSt.x!==undefined ? origSt.x+dx : (b.x-dx)+dx;
+  const by = origSt.y!==undefined ? origSt.y+dy : (b.y-dy)+dy;
+  const bw = b.width, bh = b.height;
+  // Try snapping left edge, center, right edge
+  const sxL=snapVal(bx,      gx, SNAP_THRESH);
+  const sxC=snapVal(bx+bw/2, gx, SNAP_THRESH);
+  const sxR=snapVal(bx+bw,   gx, SNAP_THRESH);
+  // Pick best x snap
+  let bestX={delta:0,line:null,val:0};
+  if(Math.abs(sxL.delta)<=SNAP_THRESH&&sxL.delta!==0){bestX={delta:sxL.delta,line:sxL.snapped,val:sxL.snapped};}
+  if(Math.abs(sxC.delta)<Math.abs(bestX.delta)||bestX.delta===0)if(sxC.delta!==0){bestX={delta:sxC.delta,line:sxC.snapped,val:sxC.snapped};}
+  if(Math.abs(sxR.delta)<Math.abs(bestX.delta)||bestX.delta===0)if(sxR.delta!==0){bestX={delta:sxR.delta,line:sxR.snapped,val:sxR.snapped};}
+  // Try snapping top, center, bottom edges
+  const syT=snapVal(by,      gy, SNAP_THRESH);
+  const syC=snapVal(by+bh/2, gy, SNAP_THRESH);
+  const syB=snapVal(by+bh,   gy, SNAP_THRESH);
+  let bestY={delta:0,line:null,val:0};
+  if(Math.abs(syT.delta)<=SNAP_THRESH&&syT.delta!==0){bestY={delta:syT.delta,line:syT.snapped,val:syT.snapped};}
+  if(Math.abs(syC.delta)<Math.abs(bestY.delta)||bestY.delta===0)if(syC.delta!==0){bestY={delta:syC.delta,line:syC.snapped,val:syC.snapped};}
+  if(Math.abs(syB.delta)<Math.abs(bestY.delta)||bestY.delta===0)if(syB.delta!==0){bestY={delta:syB.delta,line:syB.snapped,val:syB.snapped};}
+
+  return {
+    dx: dx+bestX.delta,
+    dy: dy+bestY.delta,
+    lx: bestX.line!==null ? [bestX.line] : [],
+    ly: bestY.line!==null ? [bestY.line] : []
+  };
+}
+
+function showSnapLines(lx, ly) {
+  svg.querySelectorAll('.snap-line').forEach(e=>e.remove());
+  lx.forEach(x=>{ const l=document.createElementNS(NS,'line'); l.setAttribute('class','snap-line'); l.setAttribute('x1',x);l.setAttribute('y1',0);l.setAttribute('x2',x);l.setAttribute('y2',cH); l.setAttribute('stroke','rgba(200,16,46,0.6)');l.setAttribute('stroke-width','1');l.setAttribute('stroke-dasharray','6 4');l.setAttribute('pointer-events','none'); svg.appendChild(l); });
+  ly.forEach(y=>{ const l=document.createElementNS(NS,'line'); l.setAttribute('class','snap-line'); l.setAttribute('x1',0);l.setAttribute('y1',y);l.setAttribute('x2',cW);l.setAttribute('y2',y); l.setAttribute('stroke','rgba(200,16,46,0.6)');l.setAttribute('stroke-width','1');l.setAttribute('stroke-dasharray','6 4');l.setAttribute('pointer-events','none'); svg.appendChild(l); });
+}
+function hideSnapLines(){ svg.querySelectorAll('.snap-line').forEach(e=>e.remove()); }
+
+// ── SELECTION BOX ──
+// #so lives inside #cw which has CSS scale(Z) applied.
+// So we must position in PRE-SCALE (#cw-local) pixels = SVG coords * Z.
+// getBBox() gives SVG coordinates; multiply by Z for overlay pixels.
+// getBoundingClientRect() would give SCREEN pixels which are already scaled — wrong.
 function uSel(){
   if(!sel)return hSel();
-  let r;try{r=sel.getBoundingClientRect();}catch(e){return hSel();}
-  const wr=cw.getBoundingClientRect();
+  let b;
+  try{b=sel.getBBox();}catch(e){return hSel();}
+  // #so/#ted inside #cw: coordinate space = raw SVG units. getBBox() returns SVG units. No Z multiply needed.
   const pad=4;
-  const x=r.left-wr.left-pad,y=r.top-wr.top-pad,w=r.width+pad*2,h=r.height+pad*2;
+  const x=b.x-pad, y=b.y-pad, w=b.width+pad*2, h=b.height+pad*2; // raw SVG units, no Z (overlay is inside scaled #cw)
   sr.style.cssText=`display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
   const pos={tl:[x,y],tc:[x+w/2,y],tr:[x+w,y],ml:[x,y+h/2],mr:[x+w,y+h/2],bl:[x,y+h],bc:[x+w/2,y+h],br:[x+w,y+h]};
   hdls.forEach(h=>{const[hx,hy]=pos[h.dataset.h]||[0,0];h.style.cssText=`display:block;left:${hx}px;top:${hy}px`;});
@@ -347,10 +420,15 @@ function startDrag(e,el){
   svg.style.cursor='grabbing';
   const mm=ev=>{
     if(!dragOn)return;
-    const dx=(ev.clientX-dragStart.mx)/Z,dy=(ev.clientY-dragStart.my)/Z;
+    let dx=(ev.clientX-dragStart.mx)/Z,dy=(ev.clientY-dragStart.my)/Z;
+    if(!ev.altKey){ // hold Alt to disable snap
+      const s=snapMove(el,dx,dy,elSt0);
+      dx=s.dx;dy=s.dy;
+      showSnapLines(s.lx,s.ly);
+    }
     apMove(el,dx,dy,elSt0);uSel();uPD();
   };
-  const mu=()=>{dragOn=false;svg.style.cursor='default';window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);};
+  const mu=()=>{dragOn=false;svg.style.cursor='default';hideSnapLines();window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);};
   window.addEventListener('mousemove',mm);window.addEventListener('mouseup',mu);
 }
 
@@ -474,7 +552,7 @@ function mkEll(x,y,rx,ry){return mkEl('ellipse',{id:nid('ellipse'),cx:x,cy:y,rx,
 function mkLine(x1,y1,x2,y2){return mkEl('line',{id:nid('line'),x1,y1,x2,y2,stroke:'#333333','stroke-width':4});}
 function mkText(x,y){const el=mkEl('text',{id:nid('text'),x,y,'font-family':'Harmonia Sans Pro Cyr','font-size':80,fill:'#000000','text-anchor':'start'});el.textContent='Text';return el;}
 function mkPH(x,y,w,h){
-  const g=mkEl('g',{id:nid('image')});
+  const g=mkEl('g',{id:nid('image'),'data-field':'image'});
   mkEl('rect',{x,y,width:w,height:h,fill:'#d0d0d8',stroke:'#aaa','stroke-width':2,'stroke-dasharray':'12 6'},g);
   mkEl('line',{x1:x,y1:y,x2:x+w,y2:y+h,stroke:'#aaa','stroke-width':2},g);
   mkEl('line',{x1:x+w,y1:y,x2:x,y2:y+h,stroke:'#aaa','stroke-width':2},g);
@@ -502,10 +580,9 @@ function startEdit(el){
   editEl=el;
   const ts=el.querySelector('tspan');
   ted.value=(ts||el).textContent||'';
-  const r=el.getBoundingClientRect();
-  const wr=cw.getBoundingClientRect();
-  const fs=parseFloat(el.getAttribute('font-size')||80)*Z;
-  ted.style.cssText=`display:block;left:${r.left-wr.left}px;top:${r.top-wr.top}px;width:${Math.max(200,r.width+40)}px;min-height:${fs+6}px;font-size:${fs}px;font-family:${el.getAttribute('font-family')||'inherit'}`;
+  let b;try{b=el.getBBox();}catch(e){b={x:0,y:0,width:200,height:80};}
+  const fs=parseFloat(el.getAttribute('font-size')||80);
+  ted.style.cssText=`display:block;left:${b.x}px;top:${b.y}px;width:${Math.max(200,b.width+40)}px;min-height:${b.height+6}px;font-size:${fs}px;font-family:${el.getAttribute('font-family')||'inherit'}`;
   ted.focus();ted.select();
 }
 ted.addEventListener('input',()=>{

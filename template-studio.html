@@ -717,6 +717,10 @@
     <div class="header-meta-dot"></div>
     Full Out® Creative Engine
   </div>
+  <button onclick="openDesignCanvas()" style="margin-left:auto;height:32px;padding:0 14px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="12" height="12" rx="1.5"/><path d="M4 10l2-2 2 2 4-4"/></svg>
+    Design Canvas
+  </button>
 </header>
 
 <div class="app">
@@ -1288,6 +1292,20 @@ function sanitizeSvg(svgString) {
   return { svg: out, fixes };
 }
 
+// ---- DESIGN CANVAS INTEGRATION ----
+function openDesignCanvas() {
+  const canvasWin = window.open('design-canvas.html', 'farisDesignCanvas', 'width=1400,height=900');
+  // Listen for SVG sent back from canvas
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'faris-svg-import') {
+      const { svg } = e.data;
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      const file = new File([blob], 'canvas-export.svg', { type: 'image/svg+xml' });
+      handleSvgFile(file);
+    }
+  }, { once: true });
+}
+
 // ---- SMART FIELD DETECTION ----
 // Runs on the already-sanitized SVG.
 // Returns only text/image elements that are injectable data fields — not design shapes.
@@ -1315,12 +1333,15 @@ function detectFields(svgString) {
 
   const imageIds = new Set();
   doc.querySelectorAll('image[id]').forEach(el => imageIds.add(el.getAttribute('id')));
+  // Design Canvas image placeholders: <g data-field="image" id="...">
+  doc.querySelectorAll('g[data-field="image"][id]').forEach(el => imageIds.add(el.getAttribute('id')));
 
   doc.querySelectorAll('[id]').forEach(el => {
     const id  = el.getAttribute('id');
     const tag = el.tagName.toLowerCase().replace(/.*:/, '');
 
-    if (STRUCT_TAGS.has(tag)) return;
+    // Allow <g data-field="image"> through even though g is in STRUCT_TAGS
+    if (STRUCT_TAGS.has(tag) && el.getAttribute('data-field') !== 'image') return;
     if (SHAPE_TAGS.has(tag))  return;
 
     // Hard exclude auto-generated IDs — they are static design text, not injectable data
