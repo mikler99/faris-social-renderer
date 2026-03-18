@@ -153,33 +153,27 @@ function replaceImageHref(svg, id, dataUriOrUrl, preserveAspectRatio = "xMidYMid
   const par = preserveAspectRatio;
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // Helper: inject/replace preserveAspectRatio on an <image> tag string
-  function withPar(tag) {
+  // Apply new href + preserveAspectRatio to a matched <image> tag string.
+  // Works regardless of attribute order — xlink:href/href may appear before or after id=.
+  function applyToTag(tag) {
+    // Replace xlink:href first (before plain href, to avoid double-match)
+    tag = tag.replace(/\bxlink:href="[^"]*"/, `xlink:href="${href}"`);
+    // Plain href — negative lookbehind excludes xlink:href
+    tag = tag.replace(/(?<!xlink:)\bhref="[^"]*"/, `href="${href}"`);
+    // Update or inject preserveAspectRatio
     if (/\bpreserveAspectRatio=/.test(tag)) {
-      return tag.replace(/\bpreserveAspectRatio="[^"]*"/, `preserveAspectRatio="${par}"`);
+      tag = tag.replace(/\bpreserveAspectRatio="[^"]*"/, `preserveAspectRatio="${par}"`);
+    } else {
+      tag = tag.replace(/(\/?>)$/, ` preserveAspectRatio="${par}"$1`);
     }
-    return tag.replace(/>$/, ` preserveAspectRatio="${par}">`).replace(/\/>$/, ` preserveAspectRatio="${par}"/>`);
+    return tag;
   }
 
-  // 1. Standard <image id="ID" href="..."> elements
+  // 1 & 2: Match the WHOLE <image> tag by id, regardless of where id sits among attributes.
+  //         This fixes attribute-order bugs (e.g. xlink:href before id= in Illustrator SVGs).
   svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*\\bhref=")[^"]*(")`  , "m"),
-    (match, pre, post) => {
-      const fullTag = match.replace(/href="[^"]*"/, `href="${href}"`);
-      return withPar(fullTag).match(new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*\\bhref=")[^"]*(")`  , "m"))?.[0]
-        // Simpler: just do it inline
-        || `${pre}${href}${post}`;
-    }
-  );
-  // Redo cleanly — replace href then preserveAspectRatio separately
-  svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*)(\\bhref="[^"]*")([^>]*/?>)`, "m"),
-    (_, before, _href, after) => withPar(`${before}href="${href}"${after}`)
-  );
-  // 2. xlink:href variant
-  svg = svg.replace(
-    new RegExp(`(<image[^>]*\\bid="${escapedId}"[^>]*)(\\bxlink:href="[^"]*")([^>]*/?>)`, "m"),
-    (_, before, _href, after) => withPar(`${before}xlink:href="${href}"${after}`)
+    new RegExp(`<image\\b[^>]*\\bid="${escapedId}"[^>]*/?>\\n?`, "m"),
+    applyToTag
   );
 
   // 3. Design Canvas placeholder: <g id="ID" data-field="image">...</g>
