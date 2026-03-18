@@ -146,26 +146,76 @@ function replaceTextById(svg, id, newText, opts = {}) {
 /**
  * Replace href / xlink:href on an <image> element matching id="<id>".
  */
-function replaceImageHref(svg, id, dataUriOrUrl, preserveAspectRatio = "xMidYMid slice") {
+function applyFocalPoint(tag, focalPct, canvasW) {
+  // Case A: image has transform="translate(tx ty) scale(s)"
+  const transformMatch = tag.match(/\btransform="translate\(\s*([\d.+-]+)\s+([\d.+-]+)\s*\)\s*scale\(\s*([\d.]+)\s*\)"/);
+  if (transformMatch) {
+    const [fullTransform, txStr, tyStr, scaleStr] = transformMatch;
+    const tx = parseFloat(txStr);
+    const ty = parseFloat(tyStr);
+    const scale = parseFloat(scaleStr);
+
+    // Get original image dimensions from width= and height= attributes
+    const wMatch = tag.match(/\bwidth="([\d.]+)"/);
+    const hMatch = tag.match(/\bheight="([\d.]+)"/);
+    if (!wMatch || !hMatch) return tag; // can't calculate, leave as-is
+
+    const imgW = parseFloat(wMatch[1]);
+    const scaledW = imgW * scale;
+    const overflow = scaledW - canvasW;
+
+    if (overflow <= 0) return tag; // image fits — no cropping needed
+
+    // Where is the focal point in scaled SVG units?
+    const focalScaled = imgW * (focalPct / 100) * scale;
+    // We want focalScaled to appear at canvas centre
+    let newTx = (canvasW / 2) - focalScaled;
+    // Clamp: 0 = left-aligned, -(overflow) = right-aligned
+    newTx = Math.min(0, Math.max(-overflow, newTx));
+
+    console.log(`  → translate X: ${tx.toFixed(2)} → ${newTx.toFixed(2)} (focal ${focalPct}%)`);
+
+    const newTransform = `transform="translate(${newTx.toFixed(2)} ${ty}) scale(${scale})"`;
+    return tag.replace(fullTransform, newTransform);
+  }
+
+  // Case B: image uses x/y/width/height — adjust preserveAspectRatio
+  let par;
+  if (focalPct < 38)      par = "xMinYMid slice";
+  else if (focalPct > 62) par = "xMaxYMid slice";
+  else                     par = "xMidYMid slice";
+
+  if (/\bpreserveAspectRatio=/.test(tag)) {
+    return tag.replace(/\bpreserveAspectRatio="[^"]*"/, `preserveAspectRatio="${par}"`);
+  } else {
+    return tag.replace(/(\/?>)$/, ` preserveAspectRatio="${par}"$1`);
+  }
+}
+
+
+function injectGlobalFontCss(svg) {
+  const css = `<style>svg { font-family: "Harmonia Sans Pro Cyr", "HarmoniaSansProCyr", sans-serif; }</style>`;
+  if (/<style[\s>]/m.test(svg)) return svg;
+  return svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${css}\n`);
+}
+
+// ---- Core render logic ----
+
+function replaceImageHref(svg, id, dataUriOrUrl, focalPct = 50, canvasW = 1080) {
   // NOTE: Do NOT escapeXml the href value — data URIs are base64 (safe chars only),
   // and escaping would produce &amp; / &quot; etc. inside the attribute, breaking resvg.
   const href = String(dataUriOrUrl);
-  const par = preserveAspectRatio;
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // Apply new href + preserveAspectRatio to a matched <image> tag string.
+  // Apply new href + focal-point-aware crop to a matched <image> tag string.
   // Works regardless of attribute order — xlink:href/href may appear before or after id=.
   function applyToTag(tag) {
     // Replace xlink:href first (before plain href, to avoid double-match)
     tag = tag.replace(/\bxlink:href="[^"]*"/, `xlink:href="${href}"`);
     // Plain href — negative lookbehind excludes xlink:href
     tag = tag.replace(/(?<!xlink:)\bhref="[^"]*"/, `href="${href}"`);
-    // Update or inject preserveAspectRatio
-    if (/\bpreserveAspectRatio=/.test(tag)) {
-      tag = tag.replace(/\bpreserveAspectRatio="[^"]*"/, `preserveAspectRatio="${par}"`);
-    } else {
-      tag = tag.replace(/(\/?>)$/, ` preserveAspectRatio="${par}"$1`);
-    }
+    // Apply focal-point crop (adjusts transform translate or preserveAspectRatio)
+    tag = applyFocalPoint(tag, focalPct, canvasW);
     return tag;
   }
 
@@ -190,10 +240,9 @@ function replaceImageHref(svg, id, dataUriOrUrl, preserveAspectRatio = "xMidYMid
     const ry = (rectStr.match(/\by="([^"]*)"/) || [])[1] || "0";
     const rw = (rectStr.match(/\bwidth="([^"]*)"/) || [])[1] || "100";
     const rh = (rectStr.match(/\bheight="([^"]*)"/) || [])[1] || "100";
-    svg = svg.replace(gRe,
-      `<image id="${id}" x="${rx}" y="${ry}" width="${rw}" height="${rh}" ` +
-      `href="${href}" preserveAspectRatio="${par}"/>`
-    );
+    let newTag = `<image id="${id}" x="${rx}" y="${ry}" width="${rw}" height="${rh}" href="${href}"/>`;
+    newTag = applyFocalPoint(newTag, focalPct, canvasW);
+    svg = svg.replace(gRe, newTag);
   }
 
   return svg;
@@ -249,11 +298,14 @@ async function fetchAsDataUri(url, timeoutMs = 7000) {
 async function detectSubjectFocalPoint(dataUri) {
   try {
     const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-    if (!ANTHROPIC_API_KEY) return "xMidYMid slice";
+    if (!ANTHROPIC_API_KEY) {
+      console.warn("⚠️  ANTHROPIC_API_KEY not set — skipping focal point detection, using center crop");
+      return 50;
+    }
 
     // Extract base64 and media type from data URI
     const match = dataUri.match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
-    if (!match) return "xMidYMid slice";
+    if (!match) return 50;
     const [, mediaType, b64] = match;
 
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -282,36 +334,43 @@ async function detectSubjectFocalPoint(dataUri) {
       }),
     });
 
-    if (!resp.ok) return "xMidYMid slice";
+    if (!resp.ok) {
+      console.warn(`⚠️  Claude Vision API error ${resp.status} — using center crop`);
+      return 50;
+    }
     const json = await resp.json();
     const raw = json?.content?.[0]?.text?.trim() ?? "";
     const pct = parseInt(raw, 10);
-    if (isNaN(pct)) return "xMidYMid slice";
+    if (isNaN(pct)) {
+      console.warn(`⚠️  Unexpected focal point response: "${raw}" — using center crop`);
+      return 50;
+    }
 
     console.log(`🏠 Focal point detected: ${pct}% from left`);
-
-    if (pct < 38) return "xMinYMid slice";
-    if (pct > 62) return "xMaxYMid slice";
-    return "xMidYMid slice";
+    return pct;
   } catch (err) {
     console.warn("⚠️  Focal point detection failed (using center crop):", err.message);
-    return "xMidYMid slice";
+    return 50;
   }
 }
 
-function injectGlobalFontCss(svg) {
-  const css = `<style>svg { font-family: "Harmonia Sans Pro Cyr", "HarmoniaSansProCyr", sans-serif; }</style>`;
-  if (/<style[\s>]/m.test(svg)) return svg;
-  return svg.replace(/<svg\b([^>]*)>/m, `<svg$1>\n${css}\n`);
-}
-
-// ---- Core render logic ----
+/**
+ * Given an <image> tag string that uses transform="translate(tx ty) scale(s)",
+ * adjust the translate X so the focal point (0–100% of image width) is centred
+ * in the SVG canvas. Clamps to avoid showing empty space on either side.
+ *
+ * Also handles the simpler preserveAspectRatio case for images without a transform.
+ */
 // Shared by both POST /render and POST /render/:template
 async function renderSvgToPng(svg, fields) {
   svg = injectGlobalFontCss(svg);
 
   const svgImageIds = detectImageIds(svg);
   const svgAllIds = detectIds(svg);
+
+  // Extract canvas width from the SVG viewBox for focal point calculations
+  const vbMatch = svg.match(/viewBox="[\d.]+ [\d.]+ ([\d.]+)/);
+  const canvasW = vbMatch ? parseFloat(vbMatch[1]) : 1080;
 
   // Process all fields from the request body dynamically
   for (const [key, value] of Object.entries(fields)) {
@@ -320,8 +379,8 @@ async function renderSvgToPng(svg, fields) {
     if (svgImageIds.has(key)) {
       // This field maps to an <image> element — fetch, analyse focal point, embed as base64
       const dataUri = await fetchAsDataUri(String(value));
-      const preserveAspectRatio = await detectSubjectFocalPoint(dataUri);
-      svg = replaceImageHref(svg, key, dataUri, preserveAspectRatio);
+      const focalPct = await detectSubjectFocalPoint(dataUri);
+      svg = replaceImageHref(svg, key, dataUri, focalPct, canvasW);
     } else if (svgAllIds.has(key)) {
       // Text or other element — replace inner content
       svg = replaceTextById(svg, key, String(value));
